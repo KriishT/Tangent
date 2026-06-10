@@ -1,0 +1,50 @@
+[package]
+name = "tangent"
+version = "0.1.0"
+description = "Catch every stray thought without leaving what you're doing."
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+name = "tangent_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+active-win-pos-rs = "0.10"
+
+# --- Optional voice stack (M3). Off by default to keep the base build light
+# and avoid requiring a C/C++ toolchain (cmake/clang) for whisper.cpp.
+# Build with: `cargo build --features voice` (or set in tauri.conf if desired).
+cpal = { version = "0.15", optional = true }
+whisper-rs = { version = "0.16", optional = true }
+
+[features]
+default = []
+voice = ["dep:cpal", "dep:whisper-rs"]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

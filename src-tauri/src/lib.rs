@@ -1,0 +1,171 @@
+mod context;
+#[cfg(feature = "voice")]
+mod voice;
+
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager};
+use tauri_plugin_sql::{Migration, MigrationKind};
+
+/// Triggered by the global hotkey (registered from the frontend). Reads the
+/// work context BEFORE showing the overlay, then shows the capture window and
+/// hands it the context.
+#[tauri::command]
+fn trigger_capture(app: tauri::AppHandle) {
+    let ctx = context::capture_context();
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.center();
+        let _ = win.show();
+        let _ = win.set_focus();
+        let _ = app.emit_to("capture", "open-capture", ctx);
+    }
+}
+
+/// Hides the capture overlay and returns focus to the previously active window.
+#[tauri::command]
+fn restore_focus(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.hide();
+    }
+    context::focus_previous();
+}
+
+#[tauri::command]
+fn open_main(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+/// Hold-to-talk: invoked when the global hotkey is PRESSED. Captures the work
+/// context, shows the recording HUD (without stealing focus), and starts
+/// recording. Returns the context so the frontend can attach it on save.
+#[tauri::command]
+async fn begin_voice(app: tauri::AppHandle) -> Result<context::WorkContext, String> {
+    let ctx = context::capture_context();
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.center();
+        let _ = win.show();
+        let _ = app.emit_to("capture", "voice-start", ctx.clone());
+    }
+    #[cfg(feature = "voice")]
+    {
+        voice::start_recording()?;
+    }
+    Ok(ctx)
+}
+
+/// Hold-to-talk: invoked when the hotkey is RELEASED, after transcription. Hides
+/// the HUD and returns focus to the window the user was in.
+#[tauri::command]
+fn end_voice(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.hide();
+    }
+    context::focus_previous();
+}
+
+// --- Voice command wrappers. Always present so the JS invoke handler is stable;
+// the actual body is gated behind the optional `voice` build feature.
+#[tauri::command]
+async fn voice_start() -> Result<(), String> {
+    #[cfg(feature = "voice")]
+    {
+        voice::start_recording()
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        Err("voice feature not enabled in this build".into())
+    }
+}
+
+#[tauri::command]
+async fn voice_stop_transcribe(model_path: String) -> Result<String, String> {
+    #[cfg(feature = "voice")]
+    {
+        voice::stop_and_transcribe(model_path)
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        let _ = model_path;
+        Err("voice feature not enabled in this build".into())
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "init schema",
+            sql: include_str!("../migrations/001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "ctx_extra for rich work context",
+            sql: include_str!("../migrations/002_ctx_extra.sql"),
+            kind: MigrationKind::Up,
+        },
+    ];
+
+    tauri::Builder::default()
+        .plugin(
+            tauri_plugin_sql::Builder::new()
+                .add_migrations("sqlite:tangent.db", migrations)
+                .build(),
+        )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
+        .setup(|app| {
+            // --- System tray ---
+            let open_i = MenuItem::with_id(app, "open", "Open Tangent", true, None::<&str>)?;
+            let triage_i = MenuItem::with_id(app, "triage", "Triage", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_i, &triage_i, &quit_i])?;
+
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("Tangent")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "triage" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                            let _ = app.emit_to("main", "go-triage", ());
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                });
+
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            trigger_capture,
+            restore_focus,
+            open_main,
+            begin_voice,
+            end_voice,
+            voice_start,
+            voice_stop_transcribe
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
