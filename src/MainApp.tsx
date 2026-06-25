@@ -26,6 +26,7 @@ type Tab = "triage" | "lists" | "stats" | "settings";
 export default function MainApp() {
 
   const [tab, setTab] = useState<Tab>("triage");
+  const [dataRev, setDataRev] = useState(0);
 
 
 
@@ -73,7 +74,7 @@ export default function MainApp() {
 
     const unTriage = listen("go-triage", () => setTab("triage"));
 
-
+    const unThought = listen("thought-added", () => setDataRev((n) => n + 1));
 
     return () => {
 
@@ -82,6 +83,8 @@ export default function MainApp() {
       unClose.then((f) => f());
 
       unTriage.then((f) => f());
+
+      unThought.then((f) => f());
 
     };
 
@@ -151,7 +154,7 @@ export default function MainApp() {
 
       <main className="content">
 
-        {tab === "triage" && <Triage />}
+        {tab === "triage" && <Triage dataRev={dataRev} />}
 
         {tab === "lists" && <Lists />}
 

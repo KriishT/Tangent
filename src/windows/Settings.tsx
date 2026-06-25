@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
+import HotkeyCapture from "../components/HotkeyCapture";
 import { applyHotkey } from "../lib/hotkey";
+import { validateHotkey } from "../lib/hotkeyFormat";
 import { exportAll, wipeAll } from "../lib/db";
 
 export default function Settings() {
@@ -28,6 +30,11 @@ export default function Settings() {
   }
 
   async function onSave() {
+    const check = validateHotkey(s.hotkey);
+    if (!check.ok) {
+      flash(check.reason ?? "Invalid hotkey");
+      return;
+    }
     await saveSettings(s);
     await applyHotkey().catch(() => {});
     flash("Settings saved");
@@ -74,11 +81,7 @@ export default function Settings() {
 
       <div className="setting">
         <label>Capture hotkey</label>
-        <div className="desc">
-          Global shortcut to open the capture bar. Uses Tauri accelerator syntax, e.g.
-          CommandOrControl+Shift+Space.
-        </div>
-        <input type="text" value={s.hotkey} onChange={(e) => set("hotkey", e.target.value)} />
+        <HotkeyCapture value={s.hotkey} onChange={(hotkey) => set("hotkey", hotkey)} />
       </div>
 
       <div className="setting">

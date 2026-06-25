@@ -1,4 +1,5 @@
 import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
+import { validateHotkey } from "./hotkeyFormat";
 import { loadSettings } from "./settings";
 import { startVoiceCapture, stopVoiceCapture } from "./voiceCapture";
 
@@ -10,6 +11,8 @@ import { startVoiceCapture, stopVoiceCapture } from "./voiceCapture";
 export async function applyHotkey(): Promise<void> {
   const s = await loadSettings();
   await unregisterAll();
+  const check = validateHotkey(s.hotkey);
+  if (!check.ok) return;
   await register(s.hotkey, (event) => {
     if (event.state === "Pressed") {
       void startVoiceCapture();
@@ -17,4 +20,9 @@ export async function applyHotkey(): Promise<void> {
       void stopVoiceCapture();
     }
   });
+}
+
+/** Unregister while the user is rebinding in Settings. */
+export async function pauseHotkey(): Promise<void> {
+  await unregisterAll();
 }

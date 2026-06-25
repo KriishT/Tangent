@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Bucket, Thought } from "../lib/types";
 import { BUCKET_LABELS, BUCKET_ORDER } from "../lib/types";
 import {
@@ -15,7 +16,12 @@ import { loadSettings } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
 
-export default function Triage() {
+type TriageProps = {
+  /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
+  dataRev?: number;
+};
+
+export default function Triage({ dataRev = 0 }: TriageProps) {
   const { confirm, prompt } = useDialog();
   const [items, setItems] = useState<Thought[]>([]);
   const [selected, setSelected] = useState(0);
@@ -37,13 +43,24 @@ export default function Triage() {
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, dataRev]);
 
-  // Refresh when a voice capture (or any other window) adds a thought.
+  // Refresh when a voice capture adds a thought (broadcast event).
   useEffect(() => {
     const un = listen("thought-added", () => void reload());
     return () => {
       un.then((f) => f());
+    };
+  }, [reload]);
+
+  // Refresh when the main window is shown/focused (e.g. after tray capture).
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unFocus = win.onFocusChanged(({ payload: focused }) => {
+      if (focused) void reload();
+    });
+    return () => {
+      unFocus.then((f) => f());
     };
   }, [reload]);
 
@@ -53,6 +70,7 @@ export default function Triage() {
     await insertThought({ body, source: "type", due_at: parseDueDate(body) });
     setDraft("");
     await reload();
+    void emit("thought-added", {}).catch(() => {});
   }, [draft, reload]);
 
   const sort = useCallback(

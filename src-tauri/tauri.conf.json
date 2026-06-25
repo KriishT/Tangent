@@ -26,8 +26,8 @@
       {
         "label": "capture",
         "title": "Tangent Capture",
-        "width": 460,
-        "height": 150,
+        "width": 128,
+        "height": 128,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

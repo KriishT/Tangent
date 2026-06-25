@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
 import type { WorkContext } from "./types";
 import { isBlocked, loadSettings } from "./settings";
 import { tier0Cleanup } from "./cleanup";
@@ -39,16 +39,16 @@ export async function stopVoiceCapture(): Promise<void> {
   recording = false;
   const heldMs = Date.now() - startedAt;
 
-  const s = await loadSettings();
-  void emitTo("capture", "voice-transcribing", {}).catch(() => {});
+  // Hide the HUD immediately on release — transcribe and save in the background.
+  void invoke("end_voice").catch(() => {});
 
+  const s = await loadSettings();
   let transcript = "";
   try {
     transcript = await invoke<string>("voice_stop_transcribe", { modelPath: s.modelPath });
   } catch {
     transcript = "";
   }
-  void invoke("end_voice").catch(() => {});
 
   const body = transcript.trim();
   if (!body || heldMs < MIN_HOLD_MS) return;
@@ -84,6 +84,6 @@ export async function stopVoiceCapture(): Promise<void> {
       .catch(() => {});
   }
 
-  // Tell the main window to refresh its lists.
-  void emitTo("main", "thought-added", {}).catch(() => {});
+  // Broadcast so all open views refresh (Triage, Board, etc.).
+  void emit("thought-added", {}).catch(() => {});
 }
