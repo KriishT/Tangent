@@ -45,6 +45,12 @@ export async function insertThought(t: NewThought): Promise<number> {
   return Number(res.lastInsertId);
 }
 
+export async function getThought(id: number): Promise<Thought | null> {
+  const d = await db();
+  const rows = await d.select<Thought[]>(`SELECT * FROM thoughts WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
 export async function listUntriaged(): Promise<Thought[]> {
   const d = await db();
   return d.select<Thought[]>(
@@ -92,6 +98,23 @@ export async function setBucket(id: number, bucket: Bucket): Promise<void> {
        SET bucket = $1, triaged_at = $2, resurface_at = $3, completed_at = $4
      WHERE id = $5`,
     [bucket, now, resurfaceAt, completedAt, id]
+  );
+}
+
+export async function moveToBoardColumn(id: number, target: Bucket | "done"): Promise<void> {
+  if (target === "done") {
+    await completeThought(id);
+    return;
+  }
+  const d = await db();
+  const now = new Date().toISOString();
+  const morningHour = await getSettingNumber("resurfaceHour", 9);
+  const resurfaceAt = target === "do_soon" ? nextMorningISO(morningHour) : null;
+  await d.execute(
+    `UPDATE thoughts
+       SET bucket = $1, triaged_at = $2, completed_at = NULL, resurface_at = $3
+     WHERE id = $4`,
+    [target, now, resurfaceAt, id]
   );
 }
 

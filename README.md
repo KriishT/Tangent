@@ -40,7 +40,14 @@ npm run tauri:dev -- --features voice
 npm run tauri:build -- --features voice
 ```
 
-Then in Settings, enable Voice and point "model path" at a Whisper GGML model (e.g. `ggml-base.en.bin` from the whisper.cpp model downloads).
+Then download a Whisper English model into `tangent/models/` (recommended: **ggml-small.en.bin** for accuracy vs speed; **ggml-medium.en.bin** for best accuracy):
+
+```powershell
+mkdir models -Force
+Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" -OutFile "models/ggml-small.en.bin"
+```
+
+Point **Settings → Whisper model path** at that file. Tangent preloads the model on startup and uses beam-search decoding with audio normalization.
 
 ## How it works (architecture)
 

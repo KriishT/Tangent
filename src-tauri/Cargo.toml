@@ -22,9 +22,17 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 active-win-pos-rs = "0.10"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "time"] }
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+urlencoding = "2"
+open = "5"
 
 # --- Optional voice stack (M3). Off by default to keep the base build light
 # and avoid requiring a C/C++ toolchain (cmake/clang) for whisper.cpp.

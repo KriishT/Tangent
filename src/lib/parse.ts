@@ -9,8 +9,14 @@ export function parseDueDate(text: string): string | null {
   const results = chrono.parse(text, new Date(), { forwardDate: true });
   if (results.length === 0) return null;
   const r = results[0];
-  // Require a date component; ignore bare times like "5pm" with no day.
-  if (!r.start.isCertain("day") && !r.start.isCertain("weekday") && !r.start.isCertain("month")) {
+  // If the user only gave a time ("6pm") chrono can still resolve it to the next
+  // valid occurrence (forwardDate: true). We accept time-only if an hour/minute
+  // is present; otherwise avoid guessing.
+  const hasAnyDate =
+    r.start.isCertain("day") || r.start.isCertain("weekday") || r.start.isCertain("month");
+  const hasTime = r.start.isCertain("hour") || r.start.isCertain("minute");
+
+  if (!hasAnyDate && !hasTime) {
     // Allow "tomorrow"/"today" which chrono marks via implied values.
     const lowered = text.toLowerCase();
     if (!/\b(today|tomorrow|tonight|tmrw)\b/.test(lowered)) return null;
@@ -50,7 +56,6 @@ function looksLikePath(segment: string): boolean {
 }
 
 function normalizePathSegments(segment: string): string[] {
-  const sep = segment.includes("\\") ? "\\" : "/";
   return segment.split(/[/\\]/).filter(Boolean);
 }
 

@@ -5,7 +5,8 @@ import { isBlocked, loadSettings } from "./settings";
 import { tier0Cleanup } from "./cleanup";
 import { aiCleanup } from "./aiCleanup";
 import { buildContextFields, parseDueDate } from "./parse";
-import { insertThought, updateBody } from "./db";
+import { insertThought, updateBody, getThought } from "./db";
+import { autoAddThoughtToGoogleCalendarIfConnected } from "./googleCalendar";
 
 // Hold-to-talk capture driven by the global hotkey:
 //   key DOWN  -> begin recording + show HUD (no focus stolen)
@@ -21,6 +22,17 @@ const MIN_HOLD_MS = 350;
 
 export function isRecording(): boolean {
   return recording;
+}
+
+export async function preloadVoiceModel(): Promise<void> {
+  try {
+    const s = await loadSettings();
+    if (s.modelPath) {
+      await invoke("voice_preload_model", { modelPath: s.modelPath });
+    }
+  } catch {
+    /* optional warm-up */
+  }
 }
 
 export async function startVoiceCapture(): Promise<void> {
@@ -74,6 +86,11 @@ export async function stopVoiceCapture(): Promise<void> {
     ctx_extra: blocked ? null : extra ? JSON.stringify(extra) : null,
     due_at: due,
   });
+
+  if (due) {
+    const thought = await getThought(id);
+    if (thought) void autoAddThoughtToGoogleCalendarIfConnected(thought);
+  }
 
   // Optional LLM cleanup runs after save and never blocks the flow.
   if (s.cleanupTier !== "off" && !s.faithfulMode) {

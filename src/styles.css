@@ -666,6 +666,20 @@ body.capture-window {
   border-left: 4px solid var(--col, var(--accent));
   box-shadow: var(--shadow-sm);
   transition: box-shadow var(--dur-fast) var(--ease);
+  cursor: grab;
+}
+.card:active {
+  cursor: grabbing;
+}
+.card.dragging {
+  opacity: 0.45;
+  box-shadow: var(--shadow-md);
+}
+.board-col-body.drag-over {
+  outline: 2px dashed var(--col, var(--accent));
+  outline-offset: -4px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.35);
 }
 .card:hover {
   box-shadow: var(--shadow-md);

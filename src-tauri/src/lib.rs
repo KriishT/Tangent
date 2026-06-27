@@ -1,4 +1,5 @@
 mod context;
+mod google_calendar;
 #[cfg(feature = "voice")]
 mod voice;
 
@@ -81,6 +82,46 @@ async fn voice_start() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn google_oauth_connect(
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<google_calendar::GoogleOAuthResult, String> {
+    google_calendar::oauth_connect(&client_id, client_secret.as_deref()).await
+}
+
+#[tauri::command]
+async fn google_oauth_revoke(refresh_token: String) -> Result<(), String> {
+    google_calendar::revoke_refresh_token(&refresh_token).await
+}
+
+#[tauri::command]
+async fn google_calendar_create_event(
+    params: google_calendar::CreateEventParams,
+) -> Result<google_calendar::CreateEventResult, String> {
+    google_calendar::create_calendar_event(params).await
+}
+
+#[tauri::command]
+async fn google_calendar_sync_checkin(
+    params: google_calendar::SyncCheckInParams,
+) -> Result<google_calendar::SyncCheckInResult, String> {
+    google_calendar::sync_checkin_event(params).await
+}
+
+#[tauri::command]
+fn voice_preload_model(model_path: String) -> Result<(), String> {
+    #[cfg(feature = "voice")]
+    {
+        voice::preload_model(model_path)
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        let _ = model_path;
+        Ok(())
+    }
+}
+
+#[tauri::command]
 async fn voice_stop_transcribe(model_path: String) -> Result<String, String> {
     #[cfg(feature = "voice")]
     {
@@ -122,6 +163,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // --- System tray ---
             let open_i = MenuItem::with_id(app, "open", "Open Tangent", true, None::<&str>)?;
@@ -163,6 +205,11 @@ pub fn run() {
             open_main,
             begin_voice,
             end_voice,
+            google_oauth_connect,
+            google_oauth_revoke,
+            google_calendar_create_event,
+            google_calendar_sync_checkin,
+            voice_preload_model,
             voice_start,
             voice_stop_transcribe
         ])

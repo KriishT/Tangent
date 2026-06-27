@@ -15,6 +15,7 @@ import { parseDueDate } from "../lib/parse";
 import { loadSettings } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
+import { addThoughtToGoogleCalendar, messageForCalendarOutcome } from "../lib/googleCalendar";
 
 type TriageProps = {
   /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
@@ -29,7 +30,13 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   const [searching, setSearching] = useState(false);
   const [hotkey, setHotkey] = useState("CommandOrControl+Shift+Space");
   const [draft, setDraft] = useState("");
+  const [toast, setToast] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const flash = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 1800);
+  };
 
   useEffect(() => {
     void loadSettings().then((s) => setHotkey(s.hotkey));
@@ -113,6 +120,20 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     [reload, confirm]
   );
 
+  const copy = useCallback(async (t: Thought) => {
+    try {
+      await navigator.clipboard.writeText(t.body);
+      flash("Copied");
+    } catch {
+      flash("Could not copy");
+    }
+  }, []);
+
+  const calendar = useCallback(async (t: Thought) => {
+    const result = await addThoughtToGoogleCalendar(t);
+    flash(messageForCalendarOutcome(result));
+  }, []);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (searching) return;
@@ -135,6 +156,18 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           e.preventDefault();
           void remove(t);
         }
+      } else if (e.key === "c") {
+        const t = items[selected];
+        if (t) {
+          e.preventDefault();
+          void copy(t);
+        }
+      } else if (e.key === "g") {
+        const t = items[selected];
+        if (t?.due_at) {
+          e.preventDefault();
+          void calendar(t);
+        }
       } else if (e.key === "/") {
         e.preventDefault();
         setSearching(true);
@@ -143,7 +176,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, selected, searching, sort, edit, remove]);
+  }, [items, selected, searching, sort, edit, remove, copy, calendar]);
 
   return (
     <div>
@@ -154,7 +187,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
             {items.length} {query ? "result" : "parked"}
             {items.length === 1 ? "" : "s"} · hold{" "}
             <strong>{hotkey.replace("CommandOrControl", "Ctrl")}</strong> to speak · j/k move · 1-5
-            sort · e edit · d delete · / search
+            sort · e edit · d delete · g calendar · / search
           </div>
         </div>
       </div>
@@ -223,6 +256,10 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
                   [{idx + 1}] {BUCKET_LABELS[b]}
                 </button>
               ))}
+              {t.due_at && (
+                <button onClick={() => void calendar(t)}>[g] Calendar</button>
+              )}
+              <button onClick={() => void copy(t)}>[c] Copy</button>
               <button onClick={() => edit(t)}>[e] Edit</button>
               <button className="del" onClick={() => remove(t)}>
                 [d] Delete
@@ -231,6 +268,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           </div>
         ))
       )}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

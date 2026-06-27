@@ -17,6 +17,7 @@
     "@tauri-apps/plugin-autostart": "^2.2.0",
     "@tauri-apps/plugin-global-shortcut": "^2.2.0",
     "@tauri-apps/plugin-notification": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-sql": "^2.2.0",
     "chrono-node": "^2.7.7",
     "react": "^18.3.1",
