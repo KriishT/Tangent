@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { sendNotification } from "@tauri-apps/plugin-notification";
 import { DialogProvider } from "./components/DialogProvider";
 import Triage from "./windows/Triage";
 import Lists from "./windows/Lists";
@@ -27,7 +28,7 @@ export default function MainApp() {
       timer = setInterval(() => {
         void runResurfaceTick();
         void maybeTriageNudge();
-      }, 60_000);
+      }, 30_000);
     })();
 
     const win = getCurrentWindow();
@@ -37,12 +38,26 @@ export default function MainApp() {
     });
     const unTriage = listen("go-triage", () => setTab("triage"));
     const unThought = listen("thought-added", () => setDataRev((n) => n + 1));
+    const unVoice = listen<{ outcome: string; detail?: string | null }>(
+      "voice-capture-result",
+      (e) => {
+        const { outcome, detail } = e.payload;
+        if (outcome === "saved") {
+          setTab("triage");
+          return;
+        }
+        if (outcome === "error" && detail) {
+          void sendNotification({ title: "Tangent — voice capture", body: detail });
+        }
+      }
+    );
 
     return () => {
       if (timer) clearInterval(timer);
       unClose.then((f) => f());
       unTriage.then((f) => f());
       unThought.then((f) => f());
+      unVoice.then((f) => f());
     };
   }, []);
 

@@ -135,7 +135,7 @@ textarea:focus-visible {
 }
 
 /* =========================================================
-   Recording HUD — small floating blob (capture window only)
+   Recording HUD — minimal listening chip (capture window only)
    ========================================================= */
 html.capture-window,
 body.capture-window {
@@ -154,73 +154,143 @@ body.capture-window {
   pointer-events: none;
 }
 
-.hud-blob-wrap {
+.hud-chip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 18px 11px 14px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(107, 127, 215, 0.22);
+  box-shadow:
+    0 10px 40px rgba(30, 30, 32, 0.14),
+    0 2px 8px rgba(30, 30, 32, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: hud-chip-in 0.22s var(--ease) both;
+  will-change: transform, opacity;
+}
+
+.hud-pulse {
   position: relative;
-  width: 88px;
-  height: 88px;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.hud-blob-core {
+.hud-pulse-dot {
   position: relative;
   z-index: 2;
-  width: 26px;
-  height: 26px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #8b9ef0, var(--accent) 55%, #4a5bb8);
+  background: linear-gradient(145deg, #8b9ef0 0%, #6b7fd7 55%, #5a6ec4 100%);
   box-shadow:
-    0 0 0 4px rgba(107, 127, 215, 0.25),
-    0 0 24px rgba(107, 127, 215, 0.55);
+    0 0 0 4px rgba(107, 127, 215, 0.18),
+    0 0 14px rgba(107, 127, 215, 0.45);
+  animation: hud-dot-pulse 1.6s ease-in-out infinite;
 }
 
-.hud-blob-ring {
+.hud-pulse-ring {
   position: absolute;
   inset: 0;
   margin: auto;
   border-radius: 50%;
-  border: 2.5px solid var(--accent);
+  border: 2px solid rgba(107, 127, 215, 0.55);
   opacity: 0;
   pointer-events: none;
 }
 
-.hud-blob-wrap.hud-active .hud-blob-core {
-  animation: hud-core-pulse 1.1s ease-in-out infinite;
+.hud-pulse.hud-active .hud-pulse-ring-1 {
+  animation: hud-ring-out 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 }
 
-.hud-blob-wrap.hud-active .hud-blob-ring-1 {
-  animation: hud-ring-expand 1.8s ease-out infinite;
-}
-.hud-blob-wrap.hud-active .hud-blob-ring-2 {
-  animation: hud-ring-expand 1.8s ease-out infinite 0.45s;
-}
-.hud-blob-wrap.hud-active .hud-blob-ring-3 {
-  animation: hud-ring-expand 1.8s ease-out infinite 0.9s;
+.hud-pulse.hud-active .hud-pulse-ring-2 {
+  animation: hud-ring-out 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite 0.8s;
 }
 
-@keyframes hud-core-pulse {
+.hud-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hud-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #1a1a1e;
+  line-height: 1.2;
+}
+
+.hud-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: #5c5c66;
+  line-height: 1.25;
+}
+
+@keyframes hud-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes hud-dot-pulse {
   0%,
   100% {
     transform: scale(1);
+    box-shadow:
+      0 0 0 4px rgba(107, 127, 215, 0.18),
+      0 0 14px rgba(107, 127, 215, 0.4);
   }
   50% {
-    transform: scale(1.12);
+    transform: scale(1.1);
+    box-shadow:
+      0 0 0 6px rgba(107, 127, 215, 0.12),
+      0 0 20px rgba(107, 127, 215, 0.55);
   }
 }
 
-@keyframes hud-ring-expand {
+@keyframes hud-ring-out {
   0% {
-    width: 26px;
-    height: 26px;
-    opacity: 0.75;
-    border-color: rgba(107, 127, 215, 0.9);
+    width: 12px;
+    height: 12px;
+    opacity: 0.7;
+    border-color: rgba(107, 127, 215, 0.6);
+  }
+  70% {
+    opacity: 0.15;
   }
   100% {
-    width: 88px;
-    height: 88px;
+    width: 36px;
+    height: 36px;
     opacity: 0;
-    border-color: rgba(107, 127, 215, 0.15);
+    border-color: rgba(107, 127, 215, 0.05);
+  }
+}
+
+/* Keep capture HUD animated when OS has "reduce motion" enabled. */
+@media (prefers-reduced-motion: reduce) {
+  html.capture-window .hud-chip {
+    animation: hud-chip-in 0.22s var(--ease) both !important;
+  }
+  html.capture-window .hud-pulse-dot {
+    animation: hud-dot-pulse 1.6s ease-in-out infinite !important;
+  }
+  html.capture-window .hud-pulse.hud-active .hud-pulse-ring-1 {
+    animation: hud-ring-out 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite !important;
+  }
+  html.capture-window .hud-pulse.hud-active .hud-pulse-ring-2 {
+    animation: hud-ring-out 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite 0.8s !important;
   }
 }
 
@@ -275,11 +345,14 @@ body.capture-window {
   border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 600;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .sidebar-nav button:hover {
   background: var(--surface-muted);
   color: var(--text-heading);
+}
+.sidebar-nav button:active {
+  transform: scale(0.97);
 }
 .sidebar-nav button.active {
   background: var(--accent-soft);
@@ -502,11 +575,14 @@ body.capture-window {
   font-size: 12px;
   font-weight: 600;
   box-shadow: var(--shadow-xs);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .bucket-row button:hover {
   background: var(--accent-soft);
   color: var(--accent-hover);
+}
+.bucket-row button:active {
+  transform: scale(0.96);
 }
 .bucket-row button.del:hover {
   background: var(--danger-soft);

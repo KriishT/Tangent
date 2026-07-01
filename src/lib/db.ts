@@ -153,6 +153,11 @@ export async function updateBody(id: number, body: string): Promise<void> {
   await d.execute(`UPDATE thoughts SET body = $1 WHERE id = $2`, [body, id]);
 }
 
+export async function setDueAt(id: number, dueAt: string): Promise<void> {
+  const d = await db();
+  await d.execute(`UPDATE thoughts SET due_at = $1 WHERE id = $2`, [dueAt, id]);
+}
+
 /** Permanently remove a thought. */
 export async function deleteThought(id: number): Promise<void> {
   const d = await db();

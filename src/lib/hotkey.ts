@@ -15,7 +15,9 @@ export async function applyHotkey(): Promise<void> {
   if (!check.ok) return;
   await register(s.hotkey, (event) => {
     if (event.state === "Pressed") {
-      void startVoiceCapture();
+      void loadSettings().then((settings) => {
+        if (settings.voiceEnabled) void startVoiceCapture();
+      });
     } else if (event.state === "Released") {
       void stopVoiceCapture();
     }

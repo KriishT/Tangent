@@ -39,6 +39,12 @@ fn open_main(app: tauri::AppHandle) {
     }
 }
 
+/// Active window context for typed capture (no recording).
+#[tauri::command]
+fn get_work_context() -> context::WorkContext {
+    context::capture_context()
+}
+
 /// Hold-to-talk: invoked when the global hotkey is PRESSED. Captures the work
 /// context, shows the recording HUD (without stealing focus), and starts
 /// recording. Returns the context so the frontend can attach it on save.
@@ -47,6 +53,7 @@ async fn begin_voice(app: tauri::AppHandle) -> Result<context::WorkContext, Stri
     let ctx = context::capture_context();
     if let Some(win) = app.get_webview_window("capture") {
         let _ = win.center();
+        let _ = win.set_always_on_top(true);
         let _ = win.show();
         let _ = app.emit_to("capture", "voice-start", ctx.clone());
     }
@@ -118,6 +125,19 @@ fn voice_preload_model(model_path: String) -> Result<(), String> {
     {
         let _ = model_path;
         Ok(())
+    }
+}
+
+#[tauri::command]
+async fn voice_test_microphone() -> Result<voice::MicTestResult, String> {
+    #[cfg(feature = "voice")]
+    {
+        let (device, samples) = voice::test_microphone()?;
+        Ok(voice::MicTestResult { device, samples })
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        Err("voice feature not enabled in this build".into())
     }
 }
 
@@ -203,6 +223,7 @@ pub fn run() {
             trigger_capture,
             restore_focus,
             open_main,
+            get_work_context,
             begin_voice,
             end_voice,
             google_oauth_connect,
@@ -210,6 +231,7 @@ pub fn run() {
             google_calendar_create_event,
             google_calendar_sync_checkin,
             voice_preload_model,
+            voice_test_microphone,
             voice_start,
             voice_stop_transcribe
         ])

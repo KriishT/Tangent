@@ -80,6 +80,8 @@ export interface AppSettings {
   /** @deprecated use googleCalendarPhoneMode */
   googleCalendarTriageSync?: boolean;
   googleCheckInEventId?: string;
+  /** One recurring series per chosen check-in time. */
+  googleCheckInEventIds?: string[];
   googleCheckInCalendarId?: string;
 }
 
@@ -114,6 +116,9 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
     if (!merged.modelPath) merged.modelPath = DEFAULT_MODEL_PATH;
+    if (merged.voiceEnabled === undefined) {
+      merged.voiceEnabled = DEFAULT_SETTINGS.voiceEnabled;
+    }
     if (!merged.nudgeInterval) merged.nudgeInterval = DEFAULT_SETTINGS.nudgeInterval;
     if (merged.nudgeCustomHours === undefined || merged.nudgeCustomHours < 0) {
       merged.nudgeCustomHours = DEFAULT_SETTINGS.nudgeCustomHours;
@@ -139,6 +144,9 @@ export async function loadSettings(): Promise<AppSettings> {
     }
     if (!Array.isArray(merged.checkInTimes) || merged.checkInTimes.length === 0) {
       merged.checkInTimes = [...DEFAULT_SETTINGS.checkInTimes];
+    }
+    if (!Array.isArray(merged.googleCheckInEventIds) && merged.googleCheckInEventId) {
+      merged.googleCheckInEventIds = [merged.googleCheckInEventId];
     }
     return merged;
   } catch {
@@ -247,6 +255,23 @@ export function inQuietHours(s: AppSettings, now = new Date()): boolean {
   return mins >= startM || mins < endM;
 }
 
+/** Valid chosen times as stored (no quiet-hour filtering). */
+export function chosenCheckInTimes(s: AppSettings): string[] {
+  return [...new Set((s.checkInTimes ?? []).map((t) => t.trim()).filter(Boolean))]
+    .filter((t) => parseCheckInTime(t) !== null)
+    .sort();
+}
+
+/** True when desktop popups should use the chosen check-in times list. */
+export function desktopUsesChosenTimes(s: AppSettings): boolean {
+  return s.nudgeInterval === "picked_times";
+}
+
+/** True when phone calendar should use the chosen check-in times list. */
+export function phoneUsesChosenTimes(s: AppSettings): boolean {
+  return (s.googleCalendarPhoneMode ?? "off") === "picked_times";
+}
+
 /** Parse "HH:mm" → { hour, minute } or null. */
 export function parseCheckInTime(t: string): { hour: number; minute: number } | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
@@ -278,7 +303,7 @@ export function phoneCheckInTimes(s: AppSettings): string[] {
   const mode = s.googleCalendarPhoneMode ?? "off";
   if (mode === "off") return [];
   if (mode === "interval") return intervalCheckInTimes(s);
-  return activeCheckInTimes(s);
+  return chosenCheckInTimes(s);
 }
 
 /** Check-in times excluding quiet hours, sorted. */

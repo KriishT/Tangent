@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import {
   DEFAULT_SETTINGS,
@@ -26,6 +27,19 @@ import {
   applyGoogleCalendarSettings,
 } from "../lib/googleCalendar";
 import { wipeAll } from "../lib/db";
+import { emit } from "@tauri-apps/api/event";
+
+function applyChosenTimesModes(prev: AppSettings, checkInTimes: string[]): AppSettings {
+  const updated = { ...prev, checkInTimes };
+  const hasTimes = checkInTimes.some((t) => t.trim());
+  if (hasTimes) {
+    updated.nudgeInterval = "picked_times";
+    if (isGoogleOAuthConfigured() && prev.googleTokens?.refreshToken) {
+      updated.googleCalendarPhoneMode = "picked_times";
+    }
+  }
+  return updated;
+}
 
 function localTzLabel(): string {
   try {
@@ -42,6 +56,7 @@ export default function Settings() {
   const [toast, setToast] = useState("");
   const [googleBusy, setGoogleBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [micBusy, setMicBusy] = useState(false);
 
   useEffect(() => {
     void loadSettings().then(setS);
@@ -59,6 +74,19 @@ export default function Settings() {
     setTimeout(() => setToast(""), 2200);
   }
 
+  async function onTestMic() {
+    if (micBusy) return;
+    setMicBusy(true);
+    try {
+      const r = await invoke<{ device: string; samples: number }>("voice_test_microphone");
+      flash(`Mic OK: ${r.device} (${r.samples.toLocaleString()} samples)`);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMicBusy(false);
+    }
+  }
+
   async function onSave() {
     if (saving) return;
     const check = validateHotkey(s.hotkey);
@@ -68,8 +96,18 @@ export default function Settings() {
     }
     setSaving(true);
     try {
-      await saveSettings(s);
-      const { settings: synced, message, error } = await applyGoogleCalendarSettings(s);
+      let toSave = { ...s };
+      if (toSave.googleCalendarPhoneMode === "picked_times") {
+        toSave.nudgeInterval = "picked_times";
+      } else if (
+        toSave.nudgeInterval === "picked_times" &&
+        (toSave.googleCalendarPhoneMode ?? "off") !== "off"
+      ) {
+        toSave.googleCalendarPhoneMode = "picked_times";
+      }
+
+      await saveSettings(toSave);
+      const { settings: synced, message, error } = await applyGoogleCalendarSettings(toSave);
       await saveSettings(synced);
       setS(synced);
       await applyHotkey().catch(() => {});
@@ -117,11 +155,8 @@ export default function Settings() {
 
   async function onDisconnectGoogle() {
     await disconnectGoogleCalendar();
-    setS((prev) => ({
-      ...prev,
-      googleEmail: undefined,
-      googleTokens: undefined,
-    }));
+    const fresh = await loadSettings();
+    setS(fresh);
     flash("Google Calendar disconnected");
   }
 
@@ -135,6 +170,7 @@ export default function Settings() {
     });
     if (ok) {
       await wipeAll();
+      void emit("thought-added", {}).catch(() => {});
       flash("All data wiped");
     }
   }
@@ -147,6 +183,40 @@ export default function Settings() {
       <div className="setting">
         <label>Capture hotkey</label>
         <HotkeyCapture value={s.hotkey} onChange={(hotkey) => set("hotkey", hotkey)} />
+      </div>
+
+      <div className="setting">
+        <div className="row">
+          <div>
+            <label>Voice capture</label>
+            <div className="desc">
+              Hold the hotkey anywhere and speak — release to transcribe and save to Triage.
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={s.voiceEnabled}
+            onChange={(e) => set("voiceEnabled", e.target.checked)}
+          />
+        </div>
+        {s.voiceEnabled && (
+          <>
+            <div className="desc" style={{ marginTop: 10 }}>
+              Windows: Settings → Privacy &amp; security → Microphone — turn on access and
+              allow <strong>desktop apps</strong>. Set your mic as the default input in Sound
+              settings.
+            </div>
+            <button
+              type="button"
+              className="btn"
+              style={{ marginTop: 10 }}
+              disabled={micBusy}
+              onClick={() => void onTestMic()}
+            >
+              {micBusy ? "Testing mic…" : "Test microphone"}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="setting">
@@ -227,7 +297,19 @@ export default function Settings() {
         </div>
         <select
           value={s.nudgeInterval}
-          onChange={(e) => set("nudgeInterval", e.target.value as NudgeInterval)}
+          onChange={(e) => {
+            const next = e.target.value as NudgeInterval;
+            setS((prev) => {
+              const updated = { ...prev, nudgeInterval: next };
+              if (
+                next === "picked_times" &&
+                (updated.googleCalendarPhoneMode ?? "off") !== "off"
+              ) {
+                updated.googleCalendarPhoneMode = "picked_times";
+              }
+              return updated;
+            });
+          }}
         >
           {(Object.keys(NUDGE_INTERVAL_LABELS) as NudgeInterval[]).map((k) => (
             <option key={k} value={k}>
@@ -296,8 +378,8 @@ export default function Settings() {
       <div className="setting">
         <label>Check-in times</label>
         <div className="desc">
-          Times for &quot;At chosen times&quot; phone mode and desktop &quot;At chosen times
-          each day&quot;. Ignored when phone mode is &quot;Every X hours&quot;.
+          Each time becomes its own daily &quot;Check Tangent&quot; on Google Calendar plus a
+          desktop popup (Tangent must stay in the tray). Saving creates one event per time.
         </div>
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
           {(s.checkInTimes ?? []).map((t, i) => (
@@ -308,16 +390,18 @@ export default function Settings() {
                 onChange={(e) => {
                   const next = [...(s.checkInTimes ?? [])];
                   next[i] = e.target.value;
-                  set("checkInTimes", next);
+                  setS((prev) => applyChosenTimesModes(prev, next));
                 }}
               />
               <button
                 type="button"
                 className="btn"
                 onClick={() =>
-                  set(
-                    "checkInTimes",
-                    (s.checkInTimes ?? []).filter((_, j) => j !== i),
+                  setS((prev) =>
+                    applyChosenTimesModes(
+                      prev,
+                      (prev.checkInTimes ?? []).filter((_, j) => j !== i),
+                    ),
                   )
                 }
               >
@@ -328,7 +412,11 @@ export default function Settings() {
           <button
             type="button"
             className="btn"
-            onClick={() => set("checkInTimes", [...(s.checkInTimes ?? []), "18:00"])}
+            onClick={() =>
+              setS((prev) =>
+                applyChosenTimesModes(prev, [...(prev.checkInTimes ?? []), "18:00"]),
+              )
+            }
           >
             + Add time
           </button>
@@ -356,9 +444,11 @@ export default function Settings() {
       <div className="setting">
         <label>Google Calendar</label>
         <div className="desc">
-          Connect once to add events automatically — no browser confirm. When connected,
-          thoughts with a due time are also added right after voice capture. Without
-          connecting, Calendar opens a prefilled event in your browser instead.
+          Connect once to add events automatically. On any thought in <strong>Triage</strong> or{" "}
+          <strong>Board</strong>, click <strong>Calendar</strong> (or press <strong>g</strong> in
+          Triage). If there&apos;s no due time yet, you&apos;ll be asked when to schedule it.
+          Voice notes with a due time (e.g. &quot;call mom tomorrow at 6&quot;) auto-add after
+          capture when connected.
         </div>
         {isGoogleOAuthConfigured() ? (
           <div className="row" style={{ marginTop: 12, gap: 10 }}>
@@ -392,14 +482,20 @@ export default function Settings() {
               <label>Phone check-in reminders</label>
               <div className="desc">
                 Uses a separate <strong>Tangent Reminders</strong> calendar so your main
-                calendar stays clean. Hide that calendar in Google Calendar&apos;s sidebar —
-                notifications still work. Saving replaces the old schedule (no duplicates).
+                calendar stays clean. Saving replaces the old schedule (no duplicates).
               </div>
               <select
                 value={s.googleCalendarPhoneMode ?? "off"}
-                onChange={(e) =>
-                  set("googleCalendarPhoneMode", e.target.value as GoogleCalendarPhoneMode)
-                }
+                onChange={(e) => {
+                  const next = e.target.value as GoogleCalendarPhoneMode;
+                  setS((prev) => {
+                    const updated = { ...prev, googleCalendarPhoneMode: next };
+                    if (next === "picked_times") {
+                      updated.nudgeInterval = "picked_times";
+                    }
+                    return updated;
+                  });
+                }}
                 style={{ marginTop: 10 }}
               >
                 {(Object.keys(GOOGLE_CALENDAR_PHONE_LABELS) as GoogleCalendarPhoneMode[]).map(
@@ -415,6 +511,22 @@ export default function Settings() {
                   Phone alerts at: {formatCheckInTimesLabel(phoneCheckInTimes(s))}
                   {(s.googleCalendarPhoneMode ?? "off") === "interval" &&
                     ` (every ${formatNudgeIntervalLabel(s)}, minus quiet hours)`}
+                  <div style={{ marginTop: 8 }}>
+                    <strong>On your phone (Tangent Reminders settings):</strong>
+                    <ol style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                      <li>
+                        Turn <strong>Sync</strong> <strong>ON</strong> (grey = off — no alerts
+                        until this is on).
+                      </li>
+                      <li>
+                        Under <strong>Default notifications</strong> → <strong>Add a
+                        notification</strong> → choose <strong>At time of event</strong>.
+                      </li>
+                      <li>
+                        Tap <strong>Save settings</strong> here in Tangent to refresh events.
+                      </li>
+                    </ol>
+                  </div>
                 </div>
               )}
             </div>

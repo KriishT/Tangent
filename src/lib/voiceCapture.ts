@@ -11,17 +11,26 @@ import { autoAddThoughtToGoogleCalendarIfConnected } from "./googleCalendar";
 // Hold-to-talk capture driven by the global hotkey:
 //   key DOWN  -> begin recording + show HUD (no focus stolen)
 //   key UP    -> stop, transcribe on-device, auto-save, hide HUD
-// Nothing is typed and nothing needs confirming.
 
 let recording = false;
+let voiceReady = false;
+let beginPromise: Promise<void> | null = null;
 let ctx: WorkContext = { app_name: null, title: null };
 let startedAt = 0;
 
 // Ignore accidental taps: a hold shorter than this is treated as "nothing said".
-const MIN_HOLD_MS = 350;
+const MIN_HOLD_MS = 250;
+// Let the mic stream flush a few frames before we stop.
+const STOP_FLUSH_MS = 300;
+
+export type VoiceCaptureOutcome = "saved" | "too_short" | "no_audio" | "no_speech" | "error";
 
 export function isRecording(): boolean {
   return recording;
+}
+
+async function notifyCaptureResult(outcome: VoiceCaptureOutcome, detail?: string): Promise<void> {
+  void emit("voice-capture-result", { outcome, detail: detail ?? null }).catch(() => {});
 }
 
 export async function preloadVoiceModel(): Promise<void> {
@@ -36,43 +45,89 @@ export async function preloadVoiceModel(): Promise<void> {
 }
 
 export async function startVoiceCapture(): Promise<void> {
-  if (recording) return; // guard against key auto-repeat
+  if (recording) return;
   recording = true;
+  voiceReady = false;
   startedAt = Date.now();
-  try {
-    ctx = await invoke<WorkContext>("begin_voice");
-  } catch {
-    ctx = { app_name: null, title: null };
-  }
+
+  beginPromise = (async () => {
+    try {
+      const s = await loadSettings();
+      if (!s.voiceEnabled) {
+        throw new Error("Voice capture is disabled in Settings.");
+      }
+      ctx = await invoke<WorkContext>("begin_voice");
+      voiceReady = true;
+    } catch (e) {
+      recording = false;
+      voiceReady = false;
+      ctx = { app_name: null, title: null };
+      const msg = e instanceof Error ? e.message : String(e);
+      await notifyCaptureResult("error", msg || "Could not start recording.");
+    }
+  })();
+
+  await beginPromise;
 }
 
 export async function stopVoiceCapture(): Promise<void> {
-  if (!recording) return;
-  recording = false;
-  const heldMs = Date.now() - startedAt;
+  if (!recording && !beginPromise) return;
 
-  // Hide the HUD immediately on release — transcribe and save in the background.
+  if (beginPromise) {
+    await beginPromise.catch(() => {});
+    beginPromise = null;
+  }
+
+  if (!recording) return;
+
+  const heldMs = Date.now() - startedAt;
+  recording = false;
+
   void invoke("end_voice").catch(() => {});
+
+  if (!voiceReady) return;
+
+  if (heldMs < MIN_HOLD_MS) {
+    await notifyCaptureResult("too_short", "Hold the hotkey a little longer while you speak.");
+    return;
+  }
+
+  await new Promise((r) => setTimeout(r, STOP_FLUSH_MS));
 
   const s = await loadSettings();
   let transcript = "";
+  let transcribeError = "";
   try {
     transcript = await invoke<string>("voice_stop_transcribe", { modelPath: s.modelPath });
-  } catch {
+  } catch (e) {
+    transcribeError = e instanceof Error ? e.message : String(e);
     transcript = "";
   }
 
-  const body = transcript.trim();
-  if (!body || heldMs < MIN_HOLD_MS) return;
+  if (transcribeError) {
+    await notifyCaptureResult("error", transcribeError);
+    return;
+  }
 
+  const body = transcript.trim();
+  if (!body) {
+    await notifyCaptureResult(
+      "no_speech",
+      "No speech detected — try speaking a bit louder or closer to the mic."
+    );
+    return;
+  }
+
+  const capturedAt = new Date(startedAt);
   const c = tier0Cleanup(body, s.faithfulMode);
-  const finalBody = c.cleaned;
+  const finalBody = c.cleaned.trim() || body;
   const due = parseDueDate(finalBody);
   const blocked = isBlocked(s, ctx.app_name, ctx.title);
   const { detail, extra } = buildContextFields(
     ctx.app_name,
     ctx.title,
-    ctx.process_path ?? null
+    ctx.process_path ?? null,
+    capturedAt
   );
 
   const id = await insertThought({
@@ -92,7 +147,6 @@ export async function stopVoiceCapture(): Promise<void> {
     if (thought) void autoAddThoughtToGoogleCalendarIfConnected(thought);
   }
 
-  // Optional LLM cleanup runs after save and never blocks the flow.
   if (s.cleanupTier !== "off" && !s.faithfulMode) {
     aiCleanup(finalBody, s)
       .then((out) => {
@@ -101,6 +155,6 @@ export async function stopVoiceCapture(): Promise<void> {
       .catch(() => {});
   }
 
-  // Broadcast so all open views refresh (Triage, Board, etc.).
   void emit("thought-added", {}).catch(() => {});
+  await notifyCaptureResult("saved");
 }

@@ -5,7 +5,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { dueForResurface, markNotified, stats } from "./db";
 import {
-  activeCheckInTimes,
+  chosenCheckInTimes,
   inQuietHours,
   loadSettings,
   nudgeIntervalMinutes,
@@ -15,6 +15,18 @@ import {
 } from "./settings";
 
 let granted = false;
+
+/** Grace after the chosen minute (poll runs every 30s; don't fire early). */
+const PICKED_TIME_GRACE_AFTER_MIN = 2;
+
+function minutesSinceSlot(nowM: number, slotM: number): number {
+  return nowM - slotM;
+}
+
+function isWithinPickedSlot(nowM: number, slotM: number): boolean {
+  const delta = minutesSinceSlot(nowM, slotM);
+  return delta >= 0 && delta <= PICKED_TIME_GRACE_AFTER_MIN;
+}
 
 export async function ensureNotifications(): Promise<boolean> {
   granted = await isPermissionGranted();
@@ -37,7 +49,7 @@ export async function runResurfaceTick(): Promise<void> {
 const EVENING_NUDGE_HOUR = 18;
 
 function isDueForPickedTime(s: AppSettings, now: Date): boolean {
-  const times = activeCheckInTimes(s);
+  const times = chosenCheckInTimes(s);
   if (times.length === 0) return false;
 
   const nowM = now.getHours() * 60 + now.getMinutes();
@@ -45,7 +57,7 @@ function isDueForPickedTime(s: AppSettings, now: Date): boolean {
     const p = parseCheckInTime(t);
     if (!p) continue;
     const slotM = p.hour * 60 + p.minute;
-    if (Math.abs(nowM - slotM) > 1) continue;
+    if (!isWithinPickedSlot(nowM, slotM)) continue;
     const slotKey = `${now.toDateString()}-${t}`;
     if (s.lastNudgeSlot === slotKey) continue;
     return true;
@@ -56,11 +68,12 @@ function isDueForPickedTime(s: AppSettings, now: Date): boolean {
 /** Whether a triage nudge should fire now. */
 export function shouldSendTriageNudge(s: AppSettings, now = new Date()): boolean {
   if (s.nudgeInterval === "never") return false;
-  if (inQuietHours(s, now)) return false;
 
   if (s.nudgeInterval === "picked_times") {
     return isDueForPickedTime(s, now);
   }
+
+  if (inQuietHours(s, now)) return false;
 
   const lastAt = s.lastNudgeAt ? new Date(s.lastNudgeAt) : null;
 
@@ -113,12 +126,12 @@ export async function maybeTriageNudge(): Promise<void> {
   };
 
   if (s.nudgeInterval === "picked_times") {
-    const times = activeCheckInTimes(s);
+    const times = chosenCheckInTimes(s);
     const nowM = now.getHours() * 60 + now.getMinutes();
     for (const t of times) {
       const p = parseCheckInTime(t);
       if (!p) continue;
-      if (Math.abs(nowM - (p.hour * 60 + p.minute)) <= 1) {
+      if (isWithinPickedSlot(nowM, p.hour * 60 + p.minute)) {
         patch.lastNudgeSlot = `${now.toDateString()}-${t}`;
         break;
       }

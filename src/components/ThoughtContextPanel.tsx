@@ -22,6 +22,12 @@ export default function ThoughtContextPanel({ thought }: Props) {
   if (!extra && !thought.ctx_detail) return null;
 
   const rows: { label: string; value: string }[] = [];
+  if (extra?.captured_at_local || extra?.captured_at) {
+    rows.push({
+      label: "Captured at",
+      value: extra.captured_at_local ?? new Date(extra.captured_at!).toLocaleString(),
+    });
+  }
   if (extra?.location) rows.push({ label: "Location", value: extra.location });
   if (extra?.workspace) rows.push({ label: "Workspace / folder", value: extra.workspace });
   if (extra?.file) rows.push({ label: "File", value: extra.file });

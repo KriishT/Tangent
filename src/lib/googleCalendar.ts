@@ -10,6 +10,7 @@ import {
   type AppSettings,
 } from "./settings";
 import { googleCalendarUrlForThought } from "./calendar";
+import { parseDueInput } from "./parse";
 import {
   GOOGLE_OAUTH_CLIENT_ID,
   GOOGLE_OAUTH_CLIENT_SECRET,
@@ -51,6 +52,7 @@ interface CreateEventResult {
 
 interface SyncCheckInResult {
   eventId: string | null;
+  eventIds: string[] | null;
   checkInCalendarId: string | null;
   tokens: GoogleTokens;
 }
@@ -72,59 +74,46 @@ function toLocalDateTimeString(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
-/** Build a clean recurring series from user-picked times only (not every-X-hours). */
+/** One Google Calendar series per chosen check-in time (reliable alerts). */
+export function buildCheckInSlots(
+  s: AppSettings,
+): { startLocal: string; endLocal: string }[] {
+  const times = phoneCheckInTimes(s);
+  if (times.length === 0) return [];
+
+  const now = new Date();
+  const slots: { startLocal: string; endLocal: string }[] = [];
+
+  for (const t of times) {
+    const p = parseCheckInTime(t);
+    if (!p) continue;
+    const start = new Date(now);
+    start.setHours(p.hour, p.minute, 0, 0);
+    if (start <= now) {
+      start.setDate(start.getDate() + 1);
+    }
+    const end = new Date(start.getTime() + CHECKIN_DURATION_MS);
+    slots.push({
+      startLocal: toLocalDateTimeString(start),
+      endLocal: toLocalDateTimeString(end),
+    });
+  }
+
+  return slots;
+}
+
+/** @deprecated use buildCheckInSlots */
 export function buildCheckInRecurrence(
   s: AppSettings,
 ): { rrule: string; rrules: string[]; startLocal: string; endLocal: string } | null {
-  const times = phoneCheckInTimes(s);
-  if (times.length === 0) return null;
-
-  const parsed = times
-    .map((t) => ({ t, p: parseCheckInTime(t) }))
-    .filter((x): x is { t: string; p: { hour: number; minute: number } } => x.p !== null);
-
-  if (parsed.length === 0) return null;
-
-  const now = new Date();
-  let start: Date | null = null;
-  for (const { p } of parsed) {
-    const candidate = new Date(now);
-    candidate.setHours(p.hour, p.minute, 0, 0);
-    if (candidate > now && (!start || candidate < start)) start = candidate;
-  }
-  if (!start) {
-    const first = parsed[0]!.p;
-    start = new Date(now);
-    start.setDate(start.getDate() + 1);
-    start.setHours(first.hour, first.minute, 0, 0);
-  }
-
-  const byHour = [...new Set(parsed.map(({ p }) => p.hour))].sort((a, b) => a - b);
-  const byMinute = [...new Set(parsed.map(({ p }) => p.minute))].sort((a, b) => a - b);
-  const pairSet = new Set(parsed.map(({ p }) => `${p.hour}:${p.minute}`));
-  const isCartesian =
-    byHour.length * byMinute.length === pairSet.size &&
-    byHour.every((h) => byMinute.every((m) => pairSet.has(`${h}:${m}`)));
-
-  let recurrence: string[];
-  if (isCartesian && byMinute.length === 1 && byMinute[0] === 0) {
-    recurrence = [`RRULE:FREQ=DAILY;BYHOUR=${byHour.join(",")};BYMINUTE=0;BYSECOND=0`];
-  } else if (isCartesian) {
-    recurrence = [
-      `RRULE:FREQ=DAILY;BYHOUR=${byHour.join(",")};BYMINUTE=${byMinute.join(",")};BYSECOND=0`,
-    ];
-  } else {
-    recurrence = parsed.map(
-      ({ p }) => `RRULE:FREQ=DAILY;BYHOUR=${p.hour};BYMINUTE=${p.minute};BYSECOND=0`,
-    );
-  }
-
-  const end = new Date(start.getTime() + CHECKIN_DURATION_MS);
+  const slots = buildCheckInSlots(s);
+  if (slots.length === 0) return null;
+  const first = slots[0]!;
   return {
-    rrule: recurrence[0]!,
-    rrules: recurrence,
-    startLocal: toLocalDateTimeString(start),
-    endLocal: toLocalDateTimeString(end),
+    rrule: "RRULE:FREQ=DAILY",
+    rrules: slots.map(() => "RRULE:FREQ=DAILY"),
+    startLocal: first.startLocal,
+    endLocal: first.endLocal,
   };
 }
 
@@ -140,20 +129,18 @@ export async function syncGoogleCalendarCheckIn(s: AppSettings): Promise<AppSett
 
     const mode = base.googleCalendarPhoneMode ?? "off";
     const enabled = mode !== "off";
-    const recurrence = enabled ? buildCheckInRecurrence(base) : null;
+    const slots = enabled ? buildCheckInSlots(base) : [];
 
     const result = await invoke<SyncCheckInResult>("google_calendar_sync_checkin", {
       params: {
         clientId: GOOGLE_OAUTH_CLIENT_ID,
         clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
         tokens: base.googleTokens,
-        enabled: enabled && recurrence !== null,
+        enabled: enabled && slots.length > 0,
         existingEventId: base.googleCheckInEventId ?? null,
+        existingEventIds: base.googleCheckInEventIds ?? null,
         checkInCalendarId: base.googleCheckInCalendarId ?? null,
-        rrule: recurrence?.rrule ?? null,
-        rrules: recurrence?.rrules ?? null,
-        startLocal: recurrence?.startLocal ?? null,
-        endLocal: recurrence?.endLocal ?? null,
+        checkInSlots: slots,
         timezone: localTimezone(),
       },
     });
@@ -161,15 +148,21 @@ export async function syncGoogleCalendarCheckIn(s: AppSettings): Promise<AppSett
     return {
       ...base,
       googleTokens: result.tokens,
-      googleCheckInEventId: result.eventId ?? undefined,
+      googleCheckInEventIds: result.eventIds ?? undefined,
+      googleCheckInEventId: result.eventIds?.[0] ?? result.eventId ?? undefined,
       googleCheckInCalendarId: result.checkInCalendarId ?? base.googleCheckInCalendarId,
     };
   });
 }
 
 async function deleteCheckInEvent(s: AppSettings): Promise<AppSettings> {
-  if (!s.googleCheckInEventId || !s.googleTokens?.refreshToken) {
-    return { ...s, googleCheckInEventId: undefined };
+  const ids = s.googleCheckInEventIds?.length
+    ? s.googleCheckInEventIds
+    : s.googleCheckInEventId
+      ? [s.googleCheckInEventId]
+      : [];
+  if (ids.length === 0 || !s.googleTokens?.refreshToken) {
+    return { ...s, googleCheckInEventId: undefined, googleCheckInEventIds: undefined };
   }
   const result = await invoke<SyncCheckInResult>("google_calendar_sync_checkin", {
     params: {
@@ -177,11 +170,10 @@ async function deleteCheckInEvent(s: AppSettings): Promise<AppSettings> {
       clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
       tokens: s.googleTokens,
       enabled: false,
-      existingEventId: s.googleCheckInEventId,
+      existingEventId: s.googleCheckInEventId ?? null,
+      existingEventIds: ids,
       checkInCalendarId: s.googleCheckInCalendarId ?? null,
-      rrule: null,
-      startLocal: null,
-      endLocal: null,
+      checkInSlots: [],
       timezone: localTimezone(),
     },
   });
@@ -189,6 +181,7 @@ async function deleteCheckInEvent(s: AppSettings): Promise<AppSettings> {
     ...s,
     googleTokens: result.tokens,
     googleCheckInEventId: undefined,
+    googleCheckInEventIds: undefined,
   };
 }
 
@@ -272,7 +265,9 @@ export type AddToCalendarOutcome =
   | "opened"
   | "no_due"
   | "not_connected"
-  | "failed";
+  | "failed"
+  | "cancelled"
+  | "bad_due";
 
 export interface AddToCalendarResult {
   outcome: AddToCalendarOutcome;
@@ -287,11 +282,34 @@ export function messageForCalendarOutcome(result: AddToCalendarResult): string {
       return "Opened Google Calendar (connect in Settings for one-click add)";
     case "no_due":
       return "No due time found — try “buy milk at 6 PM” or “tomorrow”";
+    case "bad_due":
+      return "Couldn't understand that time — try “tomorrow 6 PM” or “Friday 3 PM”";
+    case "cancelled":
+      return "";
     case "not_connected":
       return "Connect Google Calendar in Settings first";
     case "failed":
       return result.error ?? "Could not add to Google Calendar";
   }
+}
+
+/** Prompt for a due time when missing, then add to Google Calendar. */
+export async function addThoughtToGoogleCalendarWithDue(
+  thought: Thought,
+  askDue: () => Promise<string | null>,
+  setDue: (id: number, due: string) => Promise<void>,
+): Promise<AddToCalendarResult> {
+  let t = thought;
+  if (!t.due_at) {
+    const when = await askDue();
+    if (when == null) return { outcome: "cancelled" };
+    if (!when.trim()) return { outcome: "cancelled" };
+    const due = parseDueInput(when);
+    if (!due) return { outcome: "bad_due" };
+    await setDue(t.id, due);
+    t = { ...t, due_at: due };
+  }
+  return addThoughtToGoogleCalendar(t);
 }
 
 /** Create event via Calendar API. Returns updated tokens on success. */

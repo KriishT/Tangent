@@ -23,9 +23,12 @@ const MODEL_FALLBACK_ORDER: &[&str] = &[
 
 struct Session {
     stop: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
     handle: Option<JoinHandle<()>>,
     samples: Arc<Mutex<Vec<f32>>>,
     sample_rate: Arc<Mutex<u32>>,
+    device_name: Arc<Mutex<String>>,
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -39,6 +42,90 @@ struct CachedModel {
 #[cfg(feature = "voice")]
 static MODEL_CACHE: Mutex<Option<CachedModel>> = Mutex::new(None);
 
+#[derive(serde::Serialize)]
+pub struct MicTestResult {
+    pub device: String,
+    pub samples: usize,
+}
+
+/// Quick mic check: records ~1.5s and returns device name + sample count.
+pub fn test_microphone() -> Result<(String, usize), String> {
+    if SESSION.lock().map_err(|_| "lock poisoned")?.is_some() {
+        return Err("Cannot test microphone while a capture is in progress.".into());
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let ready = Arc::new(AtomicBool::new(false));
+    let error = Arc::new(Mutex::new(None::<String>));
+    let samples = Arc::new(Mutex::new(Vec::<f32>::new()));
+    let sample_rate = Arc::new(Mutex::new(TARGET_SAMPLE_RATE));
+    let device_name = Arc::new(Mutex::new(String::new()));
+
+    let stop_t = stop.clone();
+    let samples_t = samples.clone();
+    let sr_t = sample_rate.clone();
+    let ready_t = ready.clone();
+    let error_t = error.clone();
+    let error_report = error.clone();
+    let device_name_t = device_name.clone();
+
+    let handle = std::thread::spawn(move || {
+        if let Err(e) = run_recording_thread(
+            stop_t,
+            samples_t,
+            sr_t,
+            ready_t,
+            error_t,
+            device_name_t,
+        ) {
+            if let Ok(mut err_slot) = error_report.lock() {
+                if err_slot.is_none() {
+                    *err_slot = Some(e);
+                }
+            }
+        }
+    });
+
+    for _ in 0..80 {
+        if ready.load(Ordering::Relaxed) {
+            break;
+        }
+        if let Ok(err_slot) = error.lock() {
+            if let Some(err) = err_slot.clone() {
+                stop.store(true, Ordering::Relaxed);
+                let _ = handle.join();
+                return Err(err);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if !ready.load(Ordering::Relaxed) {
+        stop.store(true, Ordering::Relaxed);
+        let _ = handle.join();
+        return Err("Microphone did not start — check Windows microphone permissions for desktop apps.".into());
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    stop.store(true, Ordering::Relaxed);
+    let _ = handle.join();
+
+    if let Ok(err_slot) = error.lock() {
+        if let Some(err) = err_slot.clone() {
+            return Err(err);
+        }
+    }
+
+    let count = samples.lock().unwrap().len();
+    let name = device_name.lock().unwrap().clone();
+    if count == 0 {
+        return Err(format!(
+            "No audio from \"{name}\". Open Windows Settings → Privacy & security → Microphone, enable access, and allow desktop apps."
+        ));
+    }
+    Ok((name, count))
+}
+
 pub fn start_recording() -> Result<(), String> {
     let mut guard = SESSION.lock().map_err(|_| "lock poisoned")?;
     if guard.is_some() {
@@ -46,26 +133,77 @@ pub fn start_recording() -> Result<(), String> {
     }
 
     let stop = Arc::new(AtomicBool::new(false));
+    let ready = Arc::new(AtomicBool::new(false));
+    let error = Arc::new(Mutex::new(None::<String>));
     let samples = Arc::new(Mutex::new(Vec::<f32>::new()));
     let sample_rate = Arc::new(Mutex::new(TARGET_SAMPLE_RATE));
+    let device_name = Arc::new(Mutex::new(String::new()));
 
     let stop_t = stop.clone();
     let samples_t = samples.clone();
     let sr_t = sample_rate.clone();
+    let ready_t = ready.clone();
+    let error_t = error.clone();
+    let error_report = error.clone();
+    let device_name_t = device_name.clone();
 
     let handle = std::thread::spawn(move || {
-        if let Err(e) = run_recording_thread(stop_t, samples_t, sr_t) {
-            eprintln!("voice recording failed: {e}");
+        if let Err(e) = run_recording_thread(
+            stop_t,
+            samples_t,
+            sr_t,
+            ready_t,
+            error_t,
+            device_name_t,
+        ) {
+            if let Ok(mut err_slot) = error_report.lock() {
+                if err_slot.is_none() {
+                    *err_slot = Some(e);
+                }
+            }
         }
     });
 
     *guard = Some(Session {
         stop,
+        ready,
+        error,
         handle: Some(handle),
         samples,
         sample_rate,
+        device_name,
     });
-    Ok(())
+
+    // Wait until cpal has actually opened the mic (or the thread reports an error).
+    for _ in 0..80 {
+        if guard.as_ref().unwrap().ready.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let err = guard
+            .as_ref()
+            .unwrap()
+            .error
+            .lock()
+            .ok()
+            .and_then(|e| e.clone());
+        if let Some(err) = err {
+            let mut session = guard.take().unwrap();
+            session.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = session.handle.take() {
+                let _ = h.join();
+            }
+            return Err(err);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    if let Some(mut session) = guard.take() {
+        session.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = session.handle.take() {
+            let _ = h.join();
+        }
+    }
+    Err("microphone took too long to start — check Windows microphone access for desktop apps".into())
 }
 
 pub fn stop_and_transcribe(model_path: String) -> Result<String, String> {
@@ -80,17 +218,27 @@ pub fn stop_and_transcribe(model_path: String) -> Result<String, String> {
         let _ = h.join();
     }
 
+    if let Some(err) = session.error.lock().ok().and_then(|e| e.clone()) {
+        return Err(err);
+    }
+
     let samples = session.samples.lock().unwrap().clone();
     let in_rate = *session.sample_rate.lock().unwrap();
+    let mic_name = session.device_name.lock().unwrap().clone();
     if samples.is_empty() {
-        return Ok(String::new());
+        let hint = if mic_name.is_empty() {
+            "check microphone permissions".into()
+        } else {
+            format!("using \"{mic_name}\" — check Windows Settings → Privacy → Microphone → allow desktop apps")
+        };
+        return Err(format!("no audio captured — {hint}"));
     }
 
     let resolved = resolve_model_path(&model_path)?;
     let mut pcm = resample_to_16k(&samples, in_rate);
     preprocess_pcm(&mut pcm);
     if pcm.is_empty() {
-        return Ok(String::new());
+        return Err("no speech detected in recording".into());
     }
 
     transcribe_pcm(&pcm, &resolved)
@@ -137,25 +285,52 @@ fn run_recording_thread(
     stop: Arc<AtomicBool>,
     samples: Arc<Mutex<Vec<f32>>>,
     sample_rate: Arc<Mutex<u32>>,
+    ready: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
+    device_name_out: Arc<Mutex<String>>,
 ) -> Result<(), String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .ok_or("no microphone found")?;
+        .ok_or("No default microphone found. Connect a mic and set it as the default input in Windows Sound settings.")?;
 
-    let (stream_config, sample_format, rate) = pick_input_config(&device)?;
+    let device_name = device
+        .name()
+        .unwrap_or_else(|_| "unknown microphone".to_string());
+    *device_name_out.lock().unwrap() = device_name.clone();
+
+    let (stream_config, sample_format, rate) = pick_input_config(&device)
+        .map_err(|e| format!("{e} (device: {device_name})"))?;
     *sample_rate.lock().unwrap() = rate;
 
     let buf = samples.clone();
-    let err_fn = |e| eprintln!("microphone stream error: {e}");
+    let err_fn = {
+        let error = error.clone();
+        let device_name = device_name.clone();
+        move |e| {
+            let msg = format!("Microphone stream error ({device_name}): {e}");
+            eprintln!("{msg}");
+            if let Ok(mut guard) = error.lock() {
+                *guard = Some(msg);
+            }
+        }
+    };
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 push_mono_samples(&buf, data, stream_config.channels as usize, |s| s);
+            },
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::F64 => device.build_input_stream(
+            &stream_config,
+            move |data: &[f64], _: &cpal::InputCallbackInfo| {
+                push_mono_samples(&buf, data, stream_config.channels as usize, |s| s as f32);
             },
             err_fn,
             None,
@@ -191,14 +366,18 @@ fn run_recording_thread(
             None,
         ),
         other => {
-            return Err(format!("unsupported microphone format: {other:?}"));
+            return Err(format!(
+                "Unsupported microphone format ({other:?}) on device: {device_name}"
+            ));
         }
     }
-    .map_err(|e| format!("could not open microphone: {e}"))?;
+    .map_err(|e| format!("Could not open microphone ({device_name}): {e}"))?;
 
     stream
         .play()
-        .map_err(|e| format!("could not start microphone: {e}"))?;
+        .map_err(|e| format!("Could not start microphone ({device_name}): {e}"))?;
+
+    ready.store(true, Ordering::Relaxed);
 
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -212,12 +391,19 @@ fn pick_input_config(
 ) -> Result<(cpal::StreamConfig, cpal::SampleFormat, u32), String> {
     use cpal::traits::DeviceTrait;
 
+    // Prefer the device default — most reliable on Windows WASAPI.
+    if let Ok(default) = device.default_input_config() {
+        let rate = default.sample_rate().0;
+        let stream_config: cpal::StreamConfig = default.clone().into();
+        return Ok((stream_config, default.sample_format(), rate));
+    }
+
     let supported: Vec<_> = device
         .supported_input_configs()
-        .map_err(|e| format!("could not query microphone: {e}"))?
+        .map_err(|e| format!("Could not query microphone: {e}"))?
         .collect();
 
-    for &target_rate in &[TARGET_SAMPLE_RATE, 48_000, 44_100, 24_000] {
+    for &target_rate in &[48_000, 44_100, 24_000, TARGET_SAMPLE_RATE] {
         for cfg in &supported {
             if cfg.min_sample_rate().0 > target_rate || cfg.max_sample_rate().0 < target_rate {
                 continue;

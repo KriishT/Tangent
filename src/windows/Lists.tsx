@@ -11,8 +11,12 @@ import {
   listCompleted,
   moveToBoardColumn,
   reopenThought,
+  setDueAt,
 } from "../lib/db";
-import { addThoughtToGoogleCalendar, messageForCalendarOutcome } from "../lib/googleCalendar";
+import {
+  addThoughtToGoogleCalendarWithDue,
+  messageForCalendarOutcome,
+} from "../lib/googleCalendar";
 
 const ACTIVE: Bucket[] = ["do_now", "do_soon", "later", "idea"];
 const COLUMN_META: Record<string, { label: string; accent: string }> = {
@@ -35,7 +39,7 @@ function parseDropTarget(el: HTMLElement | null): DropTarget | null {
 }
 
 export default function Lists() {
-  const { confirm } = useDialog();
+  const { confirm, prompt } = useDialog();
   const [cols, setCols] = useState<Record<string, Thought[]>>({});
   const [done, setDone] = useState<Thought[]>([]);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -98,6 +102,24 @@ export default function Lists() {
       flash("Copied");
     } catch {
       flash("Could not copy");
+    }
+  };
+
+  const calendar = async (t: Thought) => {
+    const result = await addThoughtToGoogleCalendarWithDue(
+      t,
+      () =>
+        prompt({
+          title: "Add to Google Calendar",
+          message: "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM",
+          confirmLabel: "Add to Calendar",
+        }),
+      setDueAt
+    );
+    if (result.outcome === "cancelled") return;
+    flash(messageForCalendarOutcome(result));
+    if (result.outcome === "created" || result.outcome === "opened") {
+      await reload();
     }
   };
 
@@ -166,14 +188,12 @@ export default function Lists() {
             ✓ Done
           </button>
         )}
-        {!fromDone && t.due_at && (
+        {!fromDone && (
           <button
-            title="Add to Google Calendar"
-            onClick={() =>
-              void addThoughtToGoogleCalendar(t).then((r) =>
-                flash(messageForCalendarOutcome(r))
-              )
+            title={
+              t.due_at ? "Add to Google Calendar" : "Pick a time and add to Google Calendar"
             }
+            onClick={() => void calendar(t)}
           >
             Calendar
           </button>

@@ -24,6 +24,17 @@ export function parseDueDate(text: string): string | null {
   return r.start.date().toISOString();
 }
 
+/** Parse a due time from free text (chrono first, then Date.parse). */
+export function parseDueInput(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const fromChrono = parseDueDate(trimmed);
+  if (fromChrono) return fromChrono;
+  const d = new Date(trimmed);
+  if (!Number.isNaN(d.getTime())) return d.toISOString();
+  return null;
+}
+
 /** Stored in ctx_extra — full context for the "more details" panel. */
 export interface ContextExtra {
   window_title: string;
@@ -34,6 +45,10 @@ export interface ContextExtra {
   /** Human-readable location, e.g. "MemRemem › src-tauri › src › context.rs" */
   location: string | null;
   segments: string[];
+  /** ISO timestamp when the thought was captured (hotkey press / quick add). */
+  captured_at?: string;
+  /** Locale-formatted capture time for display. */
+  captured_at_local?: string;
 }
 
 const EDITOR_APPS =
@@ -72,10 +87,27 @@ function normalizePathSegments(segment: string): string[] {
 export function buildContextFields(
   app: string | null,
   title: string | null,
-  processPath: string | null = null
+  processPath: string | null = null,
+  capturedAt?: Date
 ): { detail: string | null; extra: ContextExtra | null } {
   if (!title?.trim()) {
-    return { detail: app ?? null, extra: null };
+    if (!capturedAt && !app) {
+      return { detail: app ?? null, extra: null };
+    }
+    const extra: ContextExtra = {
+      window_title: "",
+      app,
+      process_path: processPath,
+      file: null,
+      workspace: null,
+      location: null,
+      segments: [],
+    };
+    if (capturedAt) {
+      extra.captured_at = capturedAt.toISOString();
+      extra.captured_at_local = capturedAt.toLocaleString();
+    }
+    return { detail: app ?? null, extra };
   }
 
   const segments = splitTitle(title);
@@ -135,6 +167,11 @@ export function buildContextFields(
     location,
     segments,
   };
+
+  if (capturedAt) {
+    extra.captured_at = capturedAt.toISOString();
+    extra.captured_at_local = capturedAt.toLocaleString();
+  }
 
   return { detail, extra };
 }

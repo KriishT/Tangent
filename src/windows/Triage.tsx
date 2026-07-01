@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Bucket, Thought } from "../lib/types";
 import { BUCKET_LABELS, BUCKET_ORDER } from "../lib/types";
@@ -10,12 +11,16 @@ import {
   search as searchDb,
   setBucket,
   updateBody,
+  setDueAt,
 } from "../lib/db";
-import { parseDueDate } from "../lib/parse";
-import { loadSettings } from "../lib/settings";
+import { parseDueDate, buildContextFields, parseContextExtra } from "../lib/parse";
+import { loadSettings, isBlocked } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
-import { addThoughtToGoogleCalendar, messageForCalendarOutcome } from "../lib/googleCalendar";
+import {
+  addThoughtToGoogleCalendarWithDue,
+  messageForCalendarOutcome,
+} from "../lib/googleCalendar";
 
 type TriageProps = {
   /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
@@ -60,6 +65,21 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     };
   }, [reload]);
 
+  useEffect(() => {
+    const un = listen<{ outcome: string; detail?: string | null }>("voice-capture-result", (e) => {
+      const { outcome, detail } = e.payload;
+      if (outcome === "saved") {
+        flash("Voice note saved");
+        void reload();
+        return;
+      }
+      if (detail) flash(detail);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [reload]);
+
   // Refresh when the main window is shown/focused (e.g. after tray capture).
   useEffect(() => {
     const win = getCurrentWindow();
@@ -74,7 +94,45 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   const quickAdd = useCallback(async () => {
     const body = draft.trim();
     if (!body) return;
-    await insertThought({ body, source: "type", due_at: parseDueDate(body) });
+    const capturedAt = new Date();
+    const s = await loadSettings();
+    let ctxApp: string | null = null;
+    let ctxTitle: string | null = null;
+    let ctxDetail: string | null = null;
+    let ctxExtra: string | null = null;
+
+    if (s.contextEnabled) {
+      try {
+        const ctx = await invoke<{ app_name: string | null; title: string | null; process_path?: string | null }>(
+          "get_work_context"
+        );
+        const blocked = isBlocked(s, ctx.app_name, ctx.title);
+        if (!blocked) {
+          const { detail, extra } = buildContextFields(
+            ctx.app_name,
+            ctx.title,
+            ctx.process_path ?? null,
+            capturedAt
+          );
+          ctxApp = ctx.app_name;
+          ctxTitle = ctx.title;
+          ctxDetail = detail;
+          ctxExtra = extra ? JSON.stringify(extra) : null;
+        }
+      } catch {
+        /* context is optional */
+      }
+    }
+
+    await insertThought({
+      body,
+      source: "type",
+      due_at: parseDueDate(body),
+      ctx_app: ctxApp,
+      ctx_title: ctxTitle,
+      ctx_detail: ctxDetail,
+      ctx_extra: ctxExtra,
+    });
     setDraft("");
     await reload();
     void emit("thought-added", {}).catch(() => {});
@@ -130,9 +188,22 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   }, []);
 
   const calendar = useCallback(async (t: Thought) => {
-    const result = await addThoughtToGoogleCalendar(t);
+    const result = await addThoughtToGoogleCalendarWithDue(
+      t,
+      () =>
+        prompt({
+          title: "Add to Google Calendar",
+          message: "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM",
+          confirmLabel: "Add to Calendar",
+        }),
+      setDueAt
+    );
+    if (result.outcome === "cancelled") return;
     flash(messageForCalendarOutcome(result));
-  }, []);
+    if (result.outcome === "created" || result.outcome === "opened") {
+      await reload();
+    }
+  }, [prompt, reload]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -164,7 +235,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         }
       } else if (e.key === "g") {
         const t = items[selected];
-        if (t?.due_at) {
+        if (t) {
           e.preventDefault();
           void calendar(t);
         }
@@ -240,7 +311,10 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           <div key={t.id} className={`thought${i === selected ? " selected" : ""}`}>
             <div className="thought-body">{t.body}</div>
             <div className="thought-meta">
-              <span>{new Date(t.created_at).toLocaleString()}</span>
+              <span>
+                {parseContextExtra(t.ctx_extra)?.captured_at_local ??
+                  new Date(t.created_at).toLocaleString()}
+              </span>
               {t.ctx_detail && (
                 <span title={t.ctx_title ?? undefined}>
                   in {t.ctx_app ?? "app"} · {t.ctx_detail}
@@ -256,9 +330,16 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
                   [{idx + 1}] {BUCKET_LABELS[b]}
                 </button>
               ))}
-              {t.due_at && (
-                <button onClick={() => void calendar(t)}>[g] Calendar</button>
-              )}
+              <button
+                onClick={() => void calendar(t)}
+                title={
+                  t.due_at
+                    ? "Add to Google Calendar"
+                    : "Pick a time and add to Google Calendar"
+                }
+              >
+                [g] Calendar
+              </button>
               <button onClick={() => void copy(t)}>[c] Copy</button>
               <button onClick={() => edit(t)}>[e] Edit</button>
               <button className="del" onClick={() => remove(t)}>

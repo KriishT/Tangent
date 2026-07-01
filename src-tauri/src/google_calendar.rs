@@ -14,8 +14,18 @@ const SCOPE_SETUP_HINT: &str = "In Google Cloud Console → OAuth consent screen
     \".../auth/calendar\" (Google Calendar API — full access), save, then Disconnect and \
     Connect again in Tangent Settings.";
 const CALENDARS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars";
+const CALENDAR_LIST_URL: &str = "https://www.googleapis.com/calendar/v3/users/me/calendarList";
 const CHECKIN_CALENDAR_NAME: &str = "Tangent Reminders";
 const CHECKIN_EVENT_SUMMARY: &str = "Check Tangent";
+
+fn checkin_event_reminders() -> serde_json::Value {
+    serde_json::json!({
+        "useDefault": false,
+        "overrides": [
+            { "method": "popup", "minutes": 0 }
+        ]
+    })
+}
 const CALENDAR_EVENTS_URL: &str =
     "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
@@ -469,16 +479,25 @@ pub async fn create_calendar_event(params: CreateEventParams) -> Result<CreateEv
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CheckInSlotParams {
+    pub start_local: String,
+    pub end_local: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncCheckInParams {
     pub client_id: String,
     pub client_secret: Option<String>,
     pub tokens: GoogleTokens,
     pub enabled: bool,
     pub existing_event_id: Option<String>,
+    pub existing_event_ids: Option<Vec<String>>,
     pub rrule: Option<String>,
     pub rrules: Option<Vec<String>>,
     pub start_local: Option<String>,
     pub end_local: Option<String>,
+    pub check_in_slots: Option<Vec<CheckInSlotParams>>,
     pub timezone: String,
     pub check_in_calendar_id: Option<String>,
 }
@@ -487,6 +506,7 @@ pub struct SyncCheckInParams {
 #[serde(rename_all = "camelCase")]
 pub struct SyncCheckInResult {
     pub event_id: Option<String>,
+    pub event_ids: Option<Vec<String>>,
     pub check_in_calendar_id: Option<String>,
     pub tokens: GoogleTokens,
 }
@@ -562,8 +582,11 @@ async fn ensure_checkin_calendar(
 
     let body = serde_json::json!({
         "summary": CHECKIN_CALENDAR_NAME,
-        "description": "Tangent check-in reminders. Hide this calendar in Google Calendar to keep your main view clean — notifications still work.",
+        "description": "Tangent check-in reminders. Hide this calendar in Google Calendar to keep your main view clean — enable notifications for this calendar on your phone.",
         "timeZone": timezone,
+        "defaultReminders": [
+            { "method": "popup", "minutes": 0 }
+        ],
     });
     let resp = client
         .post(CALENDARS_URL)
@@ -598,6 +621,68 @@ async fn ensure_checkin_calendar(
     created.id.ok_or_else(|| {
         format!("Google did not return a calendar id. Response: {text}")
     })
+}
+
+/// Ensure the Tangent Reminders calendar has popup defaults so Android/iOS actually alert.
+async fn configure_checkin_calendar(access_token: &str, calendar_id: &str) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let reminders = serde_json::json!([{ "method": "popup", "minutes": 0 }]);
+
+    let cal_url = format!("{CALENDARS_URL}/{}", urlencoding::encode(calendar_id));
+    let _ = client
+        .patch(&cal_url)
+        .bearer_auth(access_token)
+        .json(&serde_json::json!({ "defaultReminders": reminders }))
+        .send()
+        .await;
+
+    let list_url = format!("{CALENDAR_LIST_URL}/{}", urlencoding::encode(calendar_id));
+    let get_resp = client
+        .get(&list_url)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if get_resp.status().is_success() {
+        let mut entry: serde_json::Value = get_resp.json().await.map_err(|e| e.to_string())?;
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("defaultReminders".to_string(), reminders.clone());
+            obj.insert("selected".to_string(), serde_json::Value::Bool(true));
+            obj.insert("hidden".to_string(), serde_json::Value::Bool(false));
+        }
+        let _ = client
+            .put(&list_url)
+            .bearer_auth(access_token)
+            .json(&entry)
+            .send()
+            .await;
+    } else if get_resp.status().as_u16() == 404 {
+        let insert_body = serde_json::json!({
+            "id": calendar_id,
+            "defaultReminders": reminders,
+            "selected": true,
+            "hidden": false,
+        });
+        let _ = client
+            .post(CALENDAR_LIST_URL)
+            .bearer_auth(access_token)
+            .json(&insert_body)
+            .send()
+            .await;
+    }
+
+    Ok(())
+}
+
+async fn ensure_checkin_calendar_configured(
+    access_token: &str,
+    existing_id: Option<&str>,
+    timezone: &str,
+) -> Result<String, String> {
+    let calendar_id = ensure_checkin_calendar(access_token, existing_id, timezone).await?;
+    configure_checkin_calendar(access_token, &calendar_id).await?;
+    Ok(calendar_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -664,12 +749,29 @@ async fn purge_all_checkin_events(
     access_token: &str,
     check_in_calendar_id: Option<&str>,
     stored_event_id: Option<&str>,
+    stored_event_ids: Option<&[String]>,
 ) -> Result<(), String> {
-    if let Some(id) = stored_event_id.filter(|s| !s.is_empty()) {
-        if let Some(cal) = check_in_calendar_id.filter(|s| !s.is_empty()) {
-            let _ = delete_calendar_event(access_token, cal, id).await;
+    let mut deleted: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    if let Some(ids) = stored_event_ids {
+        for id in ids {
+            if id.is_empty() || !deleted.insert(id.clone()) {
+                continue;
+            }
+            if let Some(cal) = check_in_calendar_id.filter(|s| !s.is_empty()) {
+                let _ = delete_calendar_event(access_token, cal, id).await;
+            }
+            let _ = delete_calendar_event(access_token, "primary", id).await;
         }
-        let _ = delete_calendar_event(access_token, "primary", id).await;
+    }
+
+    if let Some(id) = stored_event_id.filter(|s| !s.is_empty()) {
+        if deleted.insert(id.to_string()) {
+            if let Some(cal) = check_in_calendar_id.filter(|s| !s.is_empty()) {
+                let _ = delete_calendar_event(access_token, cal, id).await;
+            }
+            let _ = delete_calendar_event(access_token, "primary", id).await;
+        }
     }
 
     let mut calendar_ids: Vec<String> = Vec::new();
@@ -734,12 +836,14 @@ pub async fn sync_checkin_event(params: SyncCheckInParams) -> Result<SyncCheckIn
         &tokens.access_token,
         params.check_in_calendar_id.as_deref(),
         params.existing_event_id.as_deref(),
+        params.existing_event_ids.as_deref(),
     )
     .await?;
 
     if !params.enabled {
         return Ok(SyncCheckInResult {
             event_id: None,
+            event_ids: None,
             check_in_calendar_id: params.check_in_calendar_id,
             tokens,
         });
@@ -747,78 +851,76 @@ pub async fn sync_checkin_event(params: SyncCheckInParams) -> Result<SyncCheckIn
 
     require_full_calendar_scope(&tokens.access_token).await?;
 
-    let calendar_id = ensure_checkin_calendar(
+    let calendar_id = ensure_checkin_calendar_configured(
         &tokens.access_token,
         params.check_in_calendar_id.as_deref(),
         &params.timezone,
     )
     .await?;
 
-    let recurrence: Vec<String> = params
-        .rrules
-        .filter(|rules| !rules.is_empty())
+    let slots: Vec<CheckInSlotParams> = params
+        .check_in_slots
+        .filter(|s| !s.is_empty())
         .or_else(|| {
-            params
-                .rrule
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|r| vec![r.to_string()])
+            let start = params.start_local.as_deref().filter(|s| !s.is_empty())?;
+            let end = params.end_local.as_deref().filter(|s| !s.is_empty())?;
+            Some(vec![CheckInSlotParams {
+                start_local: start.to_string(),
+                end_local: end.to_string(),
+            }])
         })
-        .ok_or_else(|| "Recurrence rule is required".to_string())?;
-    let start_local = params
-        .start_local
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Event start time is required".to_string())?;
-    let end_local = params
-        .end_local
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "Event end time is required".to_string())?;
-
-    let body = serde_json::json!({
-        "summary": "Check Tangent",
-        "description": "Open Tangent on your desktop and review your thoughts.",
-        "transparency": "transparent",
-        "start": {
-            "dateTime": start_local,
-            "timeZone": params.timezone,
-        },
-        "end": {
-            "dateTime": end_local,
-            "timeZone": params.timezone,
-        },
-        "recurrence": recurrence,
-        "reminders": {
-            "useDefault": false,
-            "overrides": [
-                { "method": "popup", "minutes": 0 }
-            ],
-        },
-    });
+        .ok_or_else(|| "At least one check-in time is required".to_string())?;
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(calendar_events_url(&calendar_id))
-        .bearer_auth(&tokens.access_token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Calendar API request failed: {e}"))?;
+    let mut event_ids: Vec<String> = Vec::new();
 
-    let status = resp.status();
-    if !status.is_success() {
-        let err_body = resp.text().await.unwrap_or_default();
-        return Err(format!("Calendar API error ({status}): {err_body}"));
+    for slot in slots {
+        let body = serde_json::json!({
+            "summary": CHECKIN_EVENT_SUMMARY,
+            "description": "Open Tangent on your desktop and review your thoughts.",
+            "start": {
+                "dateTime": slot.start_local,
+                "timeZone": params.timezone,
+            },
+            "end": {
+                "dateTime": slot.end_local,
+                "timeZone": params.timezone,
+            },
+            "recurrence": ["RRULE:FREQ=DAILY"],
+            "reminders": checkin_event_reminders(),
+        });
+
+        let resp = client
+            .post(calendar_events_url(&calendar_id))
+            .bearer_auth(&tokens.access_token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Calendar API request failed: {e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(format!("Calendar API error ({status}): {err_body}"));
+        }
+
+        let created: CalendarEventResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid calendar response: {e}"))?;
+
+        if let Some(id) = created.id {
+            event_ids.push(id);
+        }
     }
 
-    let created: CalendarEventResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Invalid calendar response: {e}"))?;
+    if event_ids.is_empty() {
+        return Err("Google Calendar did not return event ids".into());
+    }
 
     Ok(SyncCheckInResult {
-        event_id: created.id,
+        event_id: event_ids.first().cloned(),
+        event_ids: Some(event_ids),
         check_in_calendar_id: Some(calendar_id),
         tokens,
     })
