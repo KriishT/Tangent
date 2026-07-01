@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { DialogProvider } from "./components/DialogProvider";
+import Logo from "./components/Logo";
 import Triage from "./windows/Triage";
 import Lists from "./windows/Lists";
 import Settings from "./windows/Settings";
@@ -71,9 +72,7 @@ export default function MainApp() {
     <DialogProvider>
       <div className="app">
         <aside className="sidebar" aria-label="Main navigation">
-          <div className="logo">
-            Tan<span>gent</span>
-          </div>
+          <Logo />
           <nav className="sidebar-nav">
             {tabs.map((t) => (
               <button

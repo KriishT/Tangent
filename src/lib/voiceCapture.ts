@@ -35,10 +35,7 @@ async function notifyCaptureResult(outcome: VoiceCaptureOutcome, detail?: string
 
 export async function preloadVoiceModel(): Promise<void> {
   try {
-    const s = await loadSettings();
-    if (s.modelPath) {
-      await invoke("voice_preload_model", { modelPath: s.modelPath });
-    }
+    await invoke("voice_preload_model", { modelPath: "" });
   } catch {
     /* optional warm-up */
   }
@@ -98,7 +95,7 @@ export async function stopVoiceCapture(): Promise<void> {
   let transcript = "";
   let transcribeError = "";
   try {
-    transcript = await invoke<string>("voice_stop_transcribe", { modelPath: s.modelPath });
+    transcript = await invoke<string>("voice_stop_transcribe", { modelPath: "" });
   } catch (e) {
     transcribeError = e instanceof Error ? e.message : String(e);
     transcript = "";

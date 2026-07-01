@@ -316,14 +316,34 @@ body.capture-window {
 }
 
 .logo {
-  font-weight: 800;
-  font-size: 18px;
-  letter-spacing: -0.03em;
-  color: var(--text-heading);
-  padding: 4px 12px 28px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 2px 10px 26px;
+  user-select: none;
 }
-.logo span {
-  color: var(--accent);
+
+.logo-mark {
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 6px rgba(42, 52, 120, 0.28));
+}
+
+.logo-wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.logo-tan {
+  color: var(--text-heading);
+}
+
+.logo-gent {
+  background: linear-gradient(128deg, #4a5bb8 0%, #6b7fd7 48%, #9aa8eb 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .sidebar-nav {
@@ -382,14 +402,15 @@ body.capture-window {
     padding: 20px 8px;
   }
   .logo {
-    font-size: 0;
+    justify-content: center;
     padding-bottom: 20px;
   }
-  .logo::before {
-    content: "T";
-    font-size: 20px;
-    font-weight: 800;
-    color: var(--accent);
+  .logo-wordmark {
+    display: none;
+  }
+  .logo-mark {
+    width: 34px;
+    height: 34px;
   }
   .nav-label {
     display: none;

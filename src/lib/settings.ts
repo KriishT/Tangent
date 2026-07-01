@@ -23,10 +23,8 @@ export const NUDGE_INTERVAL_LABELS: Record<NudgeInterval, string> = {
   picked_times: "At chosen times each day",
 };
 
-// Dev default for the on-device Whisper model. For distribution this should be
-// replaced by a bundled resource path resolved at runtime.
-export const DEFAULT_MODEL_PATH =
-  "C:\\Users\\kriis\\OneDrive\\Desktop\\MemRemem\\tangent\\models\\ggml-small.en.bin";
+// Empty = use the model bundled with the installer (ggml-base.en.bin).
+export const DEFAULT_MODEL_PATH = "";
 
 /** Best → good fallback order when resolving a local Whisper model. */
 export const WHISPER_MODEL_CANDIDATES = [

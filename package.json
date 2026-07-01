@@ -9,8 +9,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "ensure-model": "powershell -ExecutionPolicy Bypass -File scripts/ensure-whisper-model.ps1",
+    "tauri:dev": "npm run ensure-model && tauri dev",
+    "tauri:build": "npm run ensure-model && tauri build",
+    "tauri:build:voice": "npm run ensure-model && tauri build -- --features voice"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

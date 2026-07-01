@@ -9,11 +9,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use tauri::AppHandle;
+use tauri::Manager;
+
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const WHISPER_INITIAL_PROMPT: &str =
     "Personal reminders, tasks, shopping lists, appointments, and quick notes.";
 
-/// Prefer larger English models when the configured path is missing.
+/// Shipped inside the installer; users can override with a larger model in Settings.
+pub const BUNDLED_MODEL_FILE: &str = "ggml-base.en.bin";
+
+/// Prefer larger English models when searching dev / override folders.
 const MODEL_FALLBACK_ORDER: &[&str] = &[
     "ggml-medium.en.bin",
     "ggml-small.en.bin",
@@ -206,7 +212,7 @@ pub fn start_recording() -> Result<(), String> {
     Err("microphone took too long to start — check Windows microphone access for desktop apps".into())
 }
 
-pub fn stop_and_transcribe(model_path: String) -> Result<String, String> {
+pub fn stop_and_transcribe(app: &AppHandle, model_path: String) -> Result<String, String> {
     let mut session = SESSION
         .lock()
         .map_err(|_| "lock poisoned")?
@@ -234,7 +240,7 @@ pub fn stop_and_transcribe(model_path: String) -> Result<String, String> {
         return Err(format!("no audio captured — {hint}"));
     }
 
-    let resolved = resolve_model_path(&model_path)?;
+    let resolved = resolve_model_path(app, &model_path)?;
     let mut pcm = resample_to_16k(&samples, in_rate);
     preprocess_pcm(&mut pcm);
     if pcm.is_empty() {
@@ -276,8 +282,8 @@ where
 }
 
 /// Warm the Whisper model in memory so the first capture is faster.
-pub fn preload_model(model_path: String) -> Result<(), String> {
-    let resolved = resolve_model_path(&model_path)?;
+pub fn preload_model(app: &AppHandle, model_path: String) -> Result<(), String> {
+    let resolved = resolve_model_path(app, &model_path)?;
     with_cached_context(&resolved, |_| Ok(()))
 }
 
@@ -448,20 +454,51 @@ where
     }
 }
 
-fn resolve_model_path(configured: &str) -> Result<String, String> {
-    let configured_path = Path::new(configured);
-    if configured_path.exists() {
-        return Ok(configured.to_string());
+pub fn resolve_model_path(app: &AppHandle, configured: &str) -> Result<String, String> {
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        let configured_path = Path::new(configured);
+        if configured_path.exists() {
+            return Ok(configured.to_string());
+        }
+    }
+
+    // Bundled with the installer (see tauri.conf.json bundle.resources).
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled_dirs = [
+            resource_dir.join("models"),
+            resource_dir.join("resources").join("models"),
+        ];
+        for dir in bundled_dirs {
+            let bundled = dir.join(BUNDLED_MODEL_FILE);
+            if bundled.exists() {
+                return Ok(bundled.to_string_lossy().into_owned());
+            }
+            for name in MODEL_FALLBACK_ORDER {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return Ok(candidate.to_string_lossy().into_owned());
+                }
+            }
+        }
     }
 
     let mut search_dirs: Vec<PathBuf> = Vec::new();
-    if let Some(parent) = configured_path.parent() {
-        search_dirs.push(parent.to_path_buf());
+    if !configured.is_empty() {
+        if let Some(parent) = Path::new(configured).parent() {
+            search_dirs.push(parent.to_path_buf());
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        search_dirs.push(resource_dir.join("models"));
+        search_dirs.push(resource_dir.join("resources").join("models"));
     }
 
     if let Ok(cwd) = std::env::current_dir() {
         search_dirs.push(cwd.join("models"));
         search_dirs.push(cwd.join("tangent").join("models"));
+        search_dirs.push(cwd.join("src-tauri").join("resources").join("models"));
     }
 
     for dir in search_dirs {
@@ -474,7 +511,7 @@ fn resolve_model_path(configured: &str) -> Result<String, String> {
     }
 
     Err(format!(
-        "Whisper model not found at '{configured}'. Download ggml-small.en.bin or ggml-base.en.bin into a models/ folder."
+        "Whisper model not found. Reinstall Tangent or set a custom model path in Settings (e.g. ggml-small.en.bin)."
     ))
 }
 

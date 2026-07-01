@@ -1,0 +1,6 @@
+# Bundled Whisper model (ggml-base.en.bin)
+#
+# Not committed to git (~148 MB). Created automatically by:
+#   npm run ensure-model
+#
+# Shipped inside the Windows/Mac installer via tauri.conf.json bundle.resources.

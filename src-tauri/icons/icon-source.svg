@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="928" x2="896" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2a3478"/>
+      <stop offset="0.42" stop-color="#4a5bb8"/>
+      <stop offset="1" stop-color="#7b8fe8"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="512" y1="80" x2="512" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ray" x1="520" y1="500" x2="760" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d8dff8"/>
+    </linearGradient>
+  </defs>
+  <!-- Squircle app tile -->
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="228" fill="url(#shine)"/>
+  <!-- Orbit ring (open toward top-right — tangent point) -->
+  <circle
+    cx="392"
+    cy="628"
+    r="214"
+    stroke="#ffffff"
+    stroke-width="108"
+    stroke-linecap="round"
+    stroke-dasharray="1005 340"
+    stroke-dashoffset="118"
+  />
+  <!-- Tangent ray -->
+  <line
+    x1="538"
+    y1="482"
+    x2="748"
+    y2="272"
+    stroke="url(#ray)"
+    stroke-width="108"
+    stroke-linecap="round"
+  />
+  <!-- Contact point -->
+  <circle cx="538" cy="482" r="52" fill="#ffffff"/>
+  <circle cx="538" cy="482" r="30" fill="#6b7fd7" opacity="0.35"/>
+</svg>

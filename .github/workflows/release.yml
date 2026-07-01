@@ -1,0 +1,74 @@
+# Build unsigned Windows + Mac installers on each version tag.
+# Creates a DRAFT GitHub Release — add SHA-256 hashes, then click Publish.
+#
+# Required secret (optional): GOOGLE_OAUTH_CLIENT_ID
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: --features voice
+          - platform: macos-latest
+            args: --features voice
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Ensure Whisper model (bundled in installer)
+        shell: bash
+        run: bash scripts/ensure-whisper-model.sh
+
+      - name: Build and draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Tangent ${{ github.ref_name }}
+          releaseBody: |
+            Unsigned beta — see [install instructions](https://github.com/${{ github.repository }}/blob/main/docs/releasing.md).
+
+            **Windows:** SmartScreen may warn → More info → Run anyway.
+
+            **Mac:** Right-click the app → Open on first launch.
+
+            Add SHA-256 checksums here before publishing the draft.
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

@@ -40,14 +40,20 @@ npm run tauri:dev -- --features voice
 npm run tauri:build -- --features voice
 ```
 
-Then download a Whisper English model into `tangent/models/` (recommended: **ggml-small.en.bin** for accuracy vs speed; **ggml-medium.en.bin** for best accuracy):
+Then download a Whisper English model into `tangent/models/` (optional — release builds bundle `ggml-base.en.bin` automatically):
+
+```powershell
+npm run ensure-model
+```
+
+Or manually download **ggml-small.en.bin** for higher accuracy during dev:
 
 ```powershell
 mkdir models -Force
 Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" -OutFile "models/ggml-small.en.bin"
 ```
 
-Point **Settings → Whisper model path** at that file. Tangent preloads the model on startup and uses beam-search decoding with audio normalization.
+Point **Settings → Voice model** at that file to override the bundled model.
 
 ## How it works (architecture)
 
@@ -68,6 +74,8 @@ Target < 120 MB idle (see [../docs/04-technical-feasibility.md](../docs/04-techn
 ## Code signing (M5, before public distribution)
 
 Unsigned apps trigger Windows SmartScreen. For release, sign the installer (Authenticode certificate) and configure signing in `tauri.conf.json` under `bundle.windows`. See the Tauri Windows signing guide. Until then, beta testers can click through SmartScreen ("More info" -> "Run anyway").
+
+**Beta without signing:** follow [docs/releasing.md](docs/releasing.md) — GitHub Releases, checksums, and install notes for Windows + Mac.
 
 ## Notes / known follow-ups
 

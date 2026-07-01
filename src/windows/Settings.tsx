@@ -191,6 +191,7 @@ export default function Settings() {
             <label>Voice capture</label>
             <div className="desc">
               Hold the hotkey anywhere and speak — release to transcribe and save to Triage.
+              On-device voice model is included; no setup needed.
             </div>
           </div>
           <input
@@ -231,21 +232,6 @@ export default function Settings() {
             onChange={(e) => onToggleAutostart(e.target.checked)}
           />
         </div>
-      </div>
-
-      <div className="setting">
-        <label>Whisper model path</label>
-        <div className="desc">
-          Recommended: <strong>ggml-small.en.bin</strong> (best balance) or{" "}
-          <strong>ggml-medium.en.bin</strong> (highest accuracy). Place in{" "}
-          <code>tangent/models/</code>. The app caches the model in memory after first load.
-        </div>
-        <input
-          type="text"
-          placeholder="Path to ggml-small.en.bin"
-          value={s.modelPath}
-          onChange={(e) => set("modelPath", e.target.value)}
-        />
       </div>
 
       <div className="setting">

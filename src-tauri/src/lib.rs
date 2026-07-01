@@ -116,14 +116,27 @@ async fn google_calendar_sync_checkin(
 }
 
 #[tauri::command]
-fn voice_preload_model(model_path: String) -> Result<(), String> {
+fn voice_resolve_model_path(app: tauri::AppHandle, configured: String) -> Result<String, String> {
     #[cfg(feature = "voice")]
     {
-        voice::preload_model(model_path)
+        voice::resolve_model_path(&app, &configured)
     }
     #[cfg(not(feature = "voice"))]
     {
-        let _ = model_path;
+        let _ = (app, configured);
+        Err("voice feature not enabled in this build".into())
+    }
+}
+
+#[tauri::command]
+fn voice_preload_model(app: tauri::AppHandle, model_path: String) -> Result<(), String> {
+    #[cfg(feature = "voice")]
+    {
+        voice::preload_model(&app, model_path)
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        let _ = (app, model_path);
         Ok(())
     }
 }
@@ -142,14 +155,14 @@ async fn voice_test_microphone() -> Result<voice::MicTestResult, String> {
 }
 
 #[tauri::command]
-async fn voice_stop_transcribe(model_path: String) -> Result<String, String> {
+async fn voice_stop_transcribe(app: tauri::AppHandle, model_path: String) -> Result<String, String> {
     #[cfg(feature = "voice")]
     {
-        voice::stop_and_transcribe(model_path)
+        voice::stop_and_transcribe(&app, model_path)
     }
     #[cfg(not(feature = "voice"))]
     {
-        let _ = model_path;
+        let _ = (app, model_path);
         Err("voice feature not enabled in this build".into())
     }
 }
@@ -230,6 +243,7 @@ pub fn run() {
             google_oauth_revoke,
             google_calendar_create_event,
             google_calendar_sync_checkin,
+            voice_resolve_model_path,
             voice_preload_model,
             voice_test_microphone,
             voice_start,

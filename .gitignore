@@ -11,6 +11,7 @@ src-tauri/target
 .env.local
 .env.*.local
 
-# whisper models (download locally — too large for GitHub)
+# whisper models (downloaded at build — too large for GitHub)
 models/*.bin
 models/*.gguf
+src-tauri/resources/models/*.bin

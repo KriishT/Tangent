@@ -44,13 +44,16 @@
     },
     "trayIcon": {
       "id": "main-tray",
-      "iconPath": "icons/icon.png",
+      "iconPath": "icons/32x32.png",
       "tooltip": "Tangent"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "dmg"],
+    "shortDescription": "Catch stray thoughts without leaving your flow.",
+    "longDescription": "Tangent is a local-first desktop app. Hold a hotkey to capture voice or type quick notes with work context, then triage them later.",
+    "category": "Productivity",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -62,7 +65,10 @@
       "nsis": {
         "installMode": "currentUser"
       }
-    }
+    },
+    "resources": [
+      "resources/models/ggml-base.en.bin"
+    ]
   },
   "plugins": {}
 }
