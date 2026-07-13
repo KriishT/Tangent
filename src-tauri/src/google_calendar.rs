@@ -78,11 +78,57 @@ pub struct CreateEventResult {
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
-    access_token: String,
+    /// Absent when Google returns an OAuth error JSON.
+    access_token: Option<String>,
     refresh_token: Option<String>,
     expires_in: Option<i64>,
     error: Option<String>,
     error_description: Option<String>,
+}
+
+fn parse_token_response(raw: &str, status: reqwest::StatusCode, kind: &str) -> Result<GoogleTokens, String> {
+    let body: TokenResponse = serde_json::from_str(raw).map_err(|_| {
+        let preview: String = raw.chars().take(180).collect();
+        format!(
+            "Invalid {kind} response ({status}): {}",
+            if preview.trim().is_empty() {
+                "empty body from Google".to_string()
+            } else {
+                preview
+            }
+        )
+    })?;
+
+    if let Some(err) = body.error {
+        let detail = body.error_description.unwrap_or_default();
+        let hint = match err.as_str() {
+            "invalid_grant" => {
+                " Disconnect Google Calendar in Settings and connect again."
+            }
+            "invalid_client" => {
+                " Check the OAuth client ID/secret baked into this build, then reconnect."
+            }
+            _ => "",
+        };
+        return Err(format!(
+            "{kind} failed ({status}): {err}{}{hint}",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" — {detail}")
+            }
+        ));
+    }
+
+    let access_token = body.access_token.ok_or_else(|| {
+        format!("{kind} failed ({status}): Google returned no access token. Disconnect and reconnect in Settings.")
+    })?;
+    let expires_in = body.expires_in.unwrap_or(3600);
+    Ok(GoogleTokens {
+        access_token,
+        refresh_token: body.refresh_token,
+        expires_at: unix_now_secs() + expires_in,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,25 +253,46 @@ async fn exchange_code(
         .map_err(|e| format!("Token exchange failed: {e}"))?;
 
     let status = resp.status();
-    let body: TokenResponse = resp
-        .json()
+    let raw = resp
+        .text()
         .await
-        .map_err(|e| format!("Invalid token response: {e}"))?;
-
-    if let Some(err) = body.error {
-        let detail = body.error_description.unwrap_or_default();
-        return Err(format!("Token exchange failed ({status}): {err} {detail}"));
-    }
-
-    let expires_in = body.expires_in.unwrap_or(3600);
-    Ok(GoogleTokens {
-        access_token: body.access_token,
-        refresh_token: body.refresh_token,
-        expires_at: unix_now_secs() + expires_in,
-    })
+        .map_err(|e| format!("Could not read token response: {e}"))?;
+    parse_token_response(&raw, status, "Token exchange")
 }
 
 pub async fn refresh_access_token(
+    client_id: &str,
+    client_secret: Option<&str>,
+    refresh_token: &str,
+) -> Result<GoogleTokens, String> {
+    // Prefer the secret when present (Web clients require it). If Google rejects
+    // the client, retry once with PKCE-style refresh (Desktop clients).
+    let with_secret = refresh_access_token_once(client_id, client_secret, refresh_token).await;
+    match &with_secret {
+        Ok(tokens) => return Ok(preserve_refresh_token(tokens, refresh_token)),
+        Err(err)
+            if client_secret.map(|s| !s.trim().is_empty()).unwrap_or(false)
+                && (err.contains("invalid_client") || err.contains("unauthorized_client")) =>
+        {
+            let without = refresh_access_token_once(client_id, None, refresh_token).await?;
+            Ok(preserve_refresh_token(&without, refresh_token))
+        }
+        Err(_) => with_secret.map(|t| preserve_refresh_token(&t, refresh_token)),
+    }
+}
+
+fn preserve_refresh_token(tokens: &GoogleTokens, refresh_token: &str) -> GoogleTokens {
+    GoogleTokens {
+        access_token: tokens.access_token.clone(),
+        refresh_token: tokens
+            .refresh_token
+            .clone()
+            .or_else(|| Some(refresh_token.to_string())),
+        expires_at: tokens.expires_at,
+    }
+}
+
+async fn refresh_access_token_once(
     client_id: &str,
     client_secret: Option<&str>,
     refresh_token: &str,
@@ -249,22 +316,12 @@ pub async fn refresh_access_token(
         .await
         .map_err(|e| format!("Token refresh failed: {e}"))?;
 
-    let body: TokenResponse = resp
-        .json()
+    let status = resp.status();
+    let raw = resp
+        .text()
         .await
-        .map_err(|e| format!("Invalid refresh response: {e}"))?;
-
-    if let Some(err) = body.error {
-        let detail = body.error_description.unwrap_or_default();
-        return Err(format!("Token refresh failed: {err} {detail}"));
-    }
-
-    let expires_in = body.expires_in.unwrap_or(3600);
-    Ok(GoogleTokens {
-        access_token: body.access_token,
-        refresh_token: body.refresh_token.or_else(|| Some(refresh_token.to_string())),
-        expires_at: unix_now_secs() + expires_in,
-    })
+        .map_err(|e| format!("Could not read refresh response: {e}"))?;
+    parse_token_response(&raw, status, "Token refresh")
 }
 
 async fn token_scopes(access_token: &str) -> Result<Vec<String>, String> {

@@ -122,18 +122,28 @@ git push origin main --tags
 ## Release notes template (paste into GitHub)
 
 ```markdown
-## Install
+## Install (Windows)
 
-**Windows:** Run `Tangent_*_x64-setup.exe`. If SmartScreen warns → **More info** → **Run anyway**.
+1. Download `Tangent_*_x64-setup.exe` below.
+2. If SmartScreen warns → **More info** → **Run anyway**.
+3. Run the installer, then open Tangent from the tray.
 
-**Mac:** Open the `.dmg`, drag to Applications. First launch: **right-click → Open**.
+Voice is included — no extra downloads. Turn on **Voice capture** in Settings.
 
-Voice capture is included — no separate model download.
+**Google Calendar (optional):** Settings → Connect Google Calendar.
 
-## Checksums (SHA-256)
+---
 
-- Windows: `PASTE_HASH_HERE`
-- Mac: `PASTE_HASH_HERE`
+<details>
+<summary>Optional: verify download (for the curious)</summary>
+
+If you want to double-check the file wasn’t corrupted in transit, compare its SHA-256 hash to:
+
+`PASTE_HASH_HERE`
+
+In PowerShell: `Get-FileHash .\\Tangent_*_x64-setup.exe -Algorithm SHA256`
+
+</details>
 ```
 
 ---

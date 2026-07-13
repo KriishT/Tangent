@@ -49,6 +49,11 @@ function localTzLabel(): string {
   }
 }
 
+function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? navigator.userAgent);
+}
+
 export default function Settings() {
   const { confirm } = useDialog();
   const [s, setS] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -57,6 +62,7 @@ export default function Settings() {
   const [googleBusy, setGoogleBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
+  const onMac = isMacPlatform();
 
   useEffect(() => {
     void loadSettings().then(setS);
@@ -203,9 +209,18 @@ export default function Settings() {
         {s.voiceEnabled && (
           <>
             <div className="desc" style={{ marginTop: 10 }}>
-              Windows: Settings → Privacy &amp; security → Microphone — turn on access and
-              allow <strong>desktop apps</strong>. Set your mic as the default input in Sound
-              settings.
+              {onMac ? (
+                <>
+                  macOS: System Settings → Privacy &amp; Security → Microphone — allow Tangent.
+                  Then check System Settings → Sound → Input for the selected microphone.
+                </>
+              ) : (
+                <>
+                  Windows: Settings → Privacy &amp; security → Microphone — turn on access and
+                  allow <strong>desktop apps</strong>. Set your mic as the default input in Sound
+                  settings.
+                </>
+              )}
             </div>
             <button
               type="button"

@@ -159,14 +159,17 @@ export function validateHotkey(accelerator: string): HotkeyValidation {
   if (parts.length < 2) {
     return {
       ok: false,
-      reason: "Use a modifier plus a key (e.g. Shift+D or Ctrl+Shift+Space). A single key alone isn't allowed.",
+      reason: `Use a modifier plus a key (e.g. Shift+D or ${
+        isMac ? "Cmd" : "Ctrl"
+      }+Shift+Space). A single key alone isn't allowed.`,
     };
   }
 
   if (BLOCKED_SHORTCUTS.has(normalized)) {
     return {
       ok: false,
-      reason: "That shortcut is reserved by Windows or your browser (copy, paste, Alt+Tab, etc.). Try another.",
+      reason:
+        "That shortcut is reserved by your OS or browser (copy, paste, app switching, etc.). Try another.",
     };
   }
 
@@ -178,9 +181,10 @@ export function validateHotkey(accelerator: string): HotkeyValidation {
   const isLetter = /^[A-Z]$/.test(key);
 
   if (hasCtrl && isLetter && !hasShift && mods.length === 1) {
+    const primary = isMac ? "Cmd" : "Ctrl";
     return {
       ok: false,
-      reason: `Ctrl+${key} is usually taken by apps (save, copy, find, etc.). Try Shift+${key} or Ctrl+Shift+${key}.`,
+      reason: `${primary}+${key} is usually taken by apps (save, copy, find, etc.). Try Shift+${key} or ${primary}+Shift+${key}.`,
     };
   }
 

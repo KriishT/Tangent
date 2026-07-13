@@ -16,6 +16,9 @@ export default function HotkeyCapture({ value, onChange }: Props) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLButtonElement>(null);
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? navigator.userAgent);
 
   const cancelListening = useCallback(() => {
     setListening(false);
@@ -108,7 +111,8 @@ export default function HotkeyCapture({ value, onChange }: Props) {
       </button>
       <div className="desc">
         Click, press a shortcut (e.g. Shift+D), then Esc to confirm. Needs a modifier — not a
-        single key. Ctrl+C, Alt+Tab, and similar system shortcuts are blocked.
+        single key. {isMac ? "Cmd+C" : "Ctrl+C"}, Alt+Tab, and similar system shortcuts are
+        blocked.
       </div>
       {error && <div className="hotkey-capture-error">{error}</div>}
     </div>

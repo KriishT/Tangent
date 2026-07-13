@@ -111,7 +111,8 @@ export default function Lists() {
       () =>
         prompt({
           title: "Add to Google Calendar",
-          message: "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM",
+          message:
+            "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM, Jun 26 7:30 PM",
           confirmLabel: "Add to Calendar",
         }),
       setDueAt

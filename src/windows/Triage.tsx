@@ -17,6 +17,7 @@ import { parseDueDate, buildContextFields, parseContextExtra } from "../lib/pars
 import { loadSettings, isBlocked } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
+import { formatHotkeyDisplay } from "../lib/hotkeyFormat";
 import {
   addThoughtToGoogleCalendarWithDue,
   messageForCalendarOutcome,
@@ -193,7 +194,8 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
       () =>
         prompt({
           title: "Add to Google Calendar",
-          message: "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM",
+          message:
+            "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM, Jun 26 7:30 PM",
           confirmLabel: "Add to Calendar",
         }),
       setDueAt
@@ -207,6 +209,19 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // If any dialog/prompt is open, don't run global shortcuts.
+      // (e.g. typing "June" inside the calendar prompt should not trigger "e" for edit)
+      if (document.querySelector(".dialog-backdrop")) return;
+
+      // If the user is typing in an input/textarea/select/contenteditable element, ignore shortcuts.
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+          return;
+        }
+      }
+
       if (searching) return;
       if (e.key === "j" || e.key === "ArrowDown") {
         setSelected((s) => Math.min(s + 1, items.length - 1));
@@ -257,7 +272,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           <div className="page-sub">
             {items.length} {query ? "result" : "parked"}
             {items.length === 1 ? "" : "s"} · hold{" "}
-            <strong>{hotkey.replace("CommandOrControl", "Ctrl")}</strong> to speak · j/k move · 1-5
+            <strong>{formatHotkeyDisplay(hotkey)}</strong> to speak · j/k move · 1-5
             sort · e edit · d delete · g calendar · / search
           </div>
         </div>
@@ -303,7 +318,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         <div className="empty">
           Inbox at zero. Nice.
           <br />
-          Hold <strong>{hotkey.replace("CommandOrControl", "Ctrl")}</strong> anywhere and speak —
+          Hold <strong>{formatHotkeyDisplay(hotkey)}</strong> anywhere and speak —
           release to save, without leaving what you're doing.
         </div>
       ) : (
