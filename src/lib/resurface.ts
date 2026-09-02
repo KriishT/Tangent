@@ -70,6 +70,7 @@ export function shouldSendTriageNudge(s: AppSettings, now = new Date()): boolean
   if (s.nudgeInterval === "never") return false;
 
   if (s.nudgeInterval === "picked_times") {
+    if (inQuietHours(s, now)) return false;
     return isDueForPickedTime(s, now);
   }
 

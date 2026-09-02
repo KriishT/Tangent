@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tangent",
-  "version": "0.1.0",
-  "identifier": "com.tangent.app",
+  "version": "1.0.0",
+  "identifier": "com.tangent.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -68,7 +68,10 @@
     },
     "resources": [
       "resources/models/ggml-base.en.bin"
-    ]
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
   },
   "plugins": {}
 }

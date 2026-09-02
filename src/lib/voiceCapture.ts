@@ -4,7 +4,7 @@ import type { WorkContext } from "./types";
 import { isBlocked, loadSettings } from "./settings";
 import { tier0Cleanup } from "./cleanup";
 import { aiCleanup } from "./aiCleanup";
-import { buildContextFields, parseDueDate } from "./parse";
+import { buildContextFields, parseDueDateInfo, resolvedDueAt, isTentativeDue, formatDueTimeLabel } from "./parse";
 import { insertThought, updateBody, getThought } from "./db";
 import { autoAddThoughtToGoogleCalendarIfConnected } from "./googleCalendar";
 
@@ -13,20 +13,26 @@ import { autoAddThoughtToGoogleCalendarIfConnected } from "./googleCalendar";
 //   key UP    -> stop, transcribe on-device, auto-save, hide HUD
 
 let recording = false;
+let transcribing = false;
 let voiceReady = false;
 let beginPromise: Promise<void> | null = null;
 let ctx: WorkContext = { app_name: null, title: null };
 let startedAt = 0;
+let captureStartedAt = 0;
 
 // Ignore accidental taps: a hold shorter than this is treated as "nothing said".
 const MIN_HOLD_MS = 250;
 // Let the mic stream flush a few frames before we stop.
-const STOP_FLUSH_MS = 300;
+const STOP_FLUSH_MS = 400;
 
 export type VoiceCaptureOutcome = "saved" | "too_short" | "no_audio" | "no_speech" | "error";
 
 export function isRecording(): boolean {
   return recording;
+}
+
+export function isVoiceBusy(): boolean {
+  return recording || transcribing;
 }
 
 async function notifyCaptureResult(outcome: VoiceCaptureOutcome, detail?: string): Promise<void> {
@@ -35,14 +41,18 @@ async function notifyCaptureResult(outcome: VoiceCaptureOutcome, detail?: string
 
 export async function preloadVoiceModel(): Promise<void> {
   try {
-    await invoke("voice_preload_model", { modelPath: "" });
+    const s = await loadSettings();
+    await invoke("voice_preload_model", { modelPath: s.modelPath ?? "" });
+    if (s.voiceEnabled) {
+      await invoke("voice_warm_microphone");
+    }
   } catch {
     /* optional warm-up */
   }
 }
 
 export async function startVoiceCapture(): Promise<void> {
-  if (recording) return;
+  if (recording || transcribing) return;
   recording = true;
   voiceReady = false;
   startedAt = Date.now();
@@ -55,6 +65,7 @@ export async function startVoiceCapture(): Promise<void> {
       }
       ctx = await invoke<WorkContext>("begin_voice");
       voiceReady = true;
+      captureStartedAt = Date.now();
     } catch (e) {
       recording = false;
       voiceReady = false;
@@ -68,6 +79,7 @@ export async function startVoiceCapture(): Promise<void> {
 }
 
 export async function stopVoiceCapture(): Promise<void> {
+  if (transcribing) return;
   if (!recording && !beginPromise) return;
 
   if (beginPromise) {
@@ -77,17 +89,23 @@ export async function stopVoiceCapture(): Promise<void> {
 
   if (!recording) return;
 
-  const heldMs = Date.now() - startedAt;
+  const heldMs = Date.now() - (captureStartedAt || startedAt);
   recording = false;
 
-  void invoke("end_voice").catch(() => {});
-
-  if (!voiceReady) return;
+  if (!voiceReady) {
+    void invoke("end_voice").catch(() => {});
+    return;
+  }
 
   if (heldMs < MIN_HOLD_MS) {
+    void invoke("end_voice").catch(() => {});
     await notifyCaptureResult("too_short", "Hold the hotkey a little longer while you speak.");
     return;
   }
+
+  void invoke("end_voice").catch(() => {});
+  void emit("voice-transcribing", { active: true });
+  transcribing = true;
 
   await new Promise((r) => setTimeout(r, STOP_FLUSH_MS));
 
@@ -95,10 +113,13 @@ export async function stopVoiceCapture(): Promise<void> {
   let transcript = "";
   let transcribeError = "";
   try {
-    transcript = await invoke<string>("voice_stop_transcribe", { modelPath: "" });
+    transcript = await invoke<string>("voice_stop_transcribe", { modelPath: s.modelPath ?? "" });
   } catch (e) {
     transcribeError = e instanceof Error ? e.message : String(e);
     transcript = "";
+  } finally {
+    transcribing = false;
+    void emit("voice-transcribing", { active: false });
   }
 
   if (transcribeError) {
@@ -118,7 +139,8 @@ export async function stopVoiceCapture(): Promise<void> {
   const capturedAt = new Date(startedAt);
   const c = tier0Cleanup(body, s.faithfulMode);
   const finalBody = c.cleaned.trim() || body;
-  const due = parseDueDate(finalBody);
+  const dueInfo = parseDueDateInfo(finalBody);
+  const dueAt = resolvedDueAt(dueInfo);
   const blocked = isBlocked(s, ctx.app_name, ctx.title);
   const { detail, extra } = buildContextFields(
     ctx.app_name,
@@ -136,10 +158,10 @@ export async function stopVoiceCapture(): Promise<void> {
     ctx_title: blocked ? null : ctx.title,
     ctx_detail: blocked ? null : detail,
     ctx_extra: blocked ? null : extra ? JSON.stringify(extra) : null,
-    due_at: due,
+    due_at: dueAt,
   });
 
-  if (due) {
+  if (dueAt) {
     const thought = await getThought(id);
     if (thought) void autoAddThoughtToGoogleCalendarIfConnected(thought);
   }
@@ -153,5 +175,9 @@ export async function stopVoiceCapture(): Promise<void> {
   }
 
   void emit("thought-added", {}).catch(() => {});
-  await notifyCaptureResult("saved");
+  const savedDetail =
+    dueAt && isTentativeDue(dueInfo)
+      ? `Due ${formatDueTimeLabel(dueAt)} — tap Change due to adjust`
+      : undefined;
+  await notifyCaptureResult("saved", savedDetail);
 }

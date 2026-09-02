@@ -15,8 +15,11 @@ import {
   type AppSettings,
   type GoogleCalendarPhoneMode,
   type NudgeInterval,
+  type ThemeMode,
 } from "../lib/settings";
+import ThemeToggle from "../components/ThemeToggle";
 import { useDialog } from "../components/DialogProvider";
+import { applyTheme } from "../lib/theme";
 import HotkeyCapture from "../components/HotkeyCapture";
 import { applyHotkey } from "../lib/hotkey";
 import { validateHotkey } from "../lib/hotkeyFormat";
@@ -25,9 +28,10 @@ import {
   disconnectGoogleCalendar,
   isGoogleOAuthConfigured,
   applyGoogleCalendarSettings,
+  wipeAllThoughtsWithCalendar,
 } from "../lib/googleCalendar";
-import { wipeAll } from "../lib/db";
-import { emit } from "@tauri-apps/api/event";
+import { exportAll } from "../lib/db";
+import { emit, listen } from "@tauri-apps/api/event";
 
 function applyChosenTimesModes(prev: AppSettings, checkInTimes: string[]): AppSettings {
   const updated = { ...prev, checkInTimes };
@@ -54,7 +58,13 @@ function isMacPlatform(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? navigator.userAgent);
 }
 
-export default function Settings() {
+export default function Settings({
+  theme: themeProp,
+  onThemeChange,
+}: {
+  theme?: ThemeMode;
+  onThemeChange?: (mode: ThemeMode) => void;
+} = {}) {
   const { confirm } = useDialog();
   const [s, setS] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [autostart, setAutostart] = useState(false);
@@ -69,6 +79,12 @@ export default function Settings() {
     void isEnabled()
       .then(setAutostart)
       .catch(() => {});
+    const un = listen("google-calendar-disconnected", () => {
+      void loadSettings().then(setS);
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
 
   function set<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
@@ -103,6 +119,7 @@ export default function Settings() {
     setSaving(true);
     try {
       let toSave = { ...s };
+      applyTheme(toSave.theme);
       if (toSave.googleCalendarPhoneMode === "picked_times") {
         toSave.nudgeInterval = "picked_times";
       } else if (
@@ -116,7 +133,9 @@ export default function Settings() {
       const { settings: synced, message, error } = await applyGoogleCalendarSettings(toSave);
       await saveSettings(synced);
       setS(synced);
-      await applyHotkey().catch(() => {});
+      await applyHotkey().then((hotkeyErr) => {
+        if (hotkeyErr) flash(hotkeyErr);
+      });
       if (error) flash(error);
       else flash(message ?? "Settings saved");
     } finally {
@@ -129,8 +148,8 @@ export default function Settings() {
       if (next) await enable();
       else await disable();
       setAutostart(next);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Could not change startup setting");
     }
   }
 
@@ -160,24 +179,48 @@ export default function Settings() {
   }
 
   async function onDisconnectGoogle() {
-    await disconnectGoogleCalendar();
-    const fresh = await loadSettings();
-    setS(fresh);
-    flash("Google Calendar disconnected");
+    setGoogleBusy(true);
+    try {
+      await disconnectGoogleCalendar();
+      setS(await loadSettings());
+      flash("Google Calendar disconnected");
+    } catch {
+      setS(await loadSettings());
+      flash("Google Calendar disconnected");
+    } finally {
+      setGoogleBusy(false);
+    }
   }
 
   async function onWipe() {
     const ok = await confirm({
       title: "Delete all thoughts?",
-      message: "This permanently removes every captured thought. It cannot be undone.",
+      message:
+        "This permanently removes every captured thought and linked calendar events. Settings and Google connection are kept. It cannot be undone.",
       confirmLabel: "Delete everything",
       cancelLabel: "Cancel",
       variant: "danger",
     });
     if (ok) {
-      await wipeAll();
+      await wipeAllThoughtsWithCalendar();
       void emit("thought-added", {}).catch(() => {});
-      flash("All data wiped");
+      flash("All thoughts wiped");
+    }
+  }
+
+  async function onExport() {
+    try {
+      const json = await exportAll();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tangent-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      flash("Export downloaded");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Export failed");
     }
   }
 
@@ -185,6 +228,25 @@ export default function Settings() {
     <div>
       <div className="page-title">Settings</div>
       <div className="page-sub">Private and local by default.</div>
+
+      <div className="setting">
+        <label>Appearance</label>
+        <div className="desc">Choose light, dark, or match your system preference.</div>
+        <div style={{ marginTop: 12 }}>
+          <ThemeToggle
+            value={themeProp ?? s.theme}
+            onChange={(mode) => {
+              setS((prev) => ({ ...prev, theme: mode }));
+              applyTheme(mode);
+              onThemeChange?.(mode);
+              void (async () => {
+                const latest = await loadSettings();
+                await saveSettings({ ...latest, theme: mode });
+              })();
+            }}
+          />
+        </div>
+      </div>
 
       <div className="setting">
         <label>Capture hotkey</label>
@@ -197,7 +259,8 @@ export default function Settings() {
             <label>Voice capture</label>
             <div className="desc">
               Hold the hotkey anywhere and speak — release to transcribe and save to Triage.
-              On-device voice model is included; no setup needed.
+              Wait for <strong>Listening</strong> in the chip before you start talking.
+              The mic stays warm in the background for faster capture. On-device model included.
             </div>
           </div>
           <input
@@ -254,6 +317,9 @@ export default function Settings() {
           <div>
             <label>Faithful transcripts</label>
             <div className="desc">Skip automatic filler-word cleanup on voice capture.</div>
+            <div className="desc" style={{ marginTop: 4 }}>
+              Turn on for word-for-word transcripts — best when accuracy matters more than polish.
+            </div>
           </div>
           <input
             type="checkbox"
@@ -291,10 +357,11 @@ export default function Settings() {
       </div>
 
       <div className="setting">
-        <label>Triage reminders</label>
+        <label>Triage reminders (this computer)</label>
         <div className="desc">
           Desktop popup on this cadence saying &quot;Check Tangent now&quot; — even when
-          triage is empty. Tangent must be running (tray).
+          triage is empty. Tangent must stay running in the tray. Quiet hours pause these
+          pings (including chosen check-in times).
         </div>
         <select
           value={s.nudgeInterval}
@@ -443,13 +510,22 @@ export default function Settings() {
       </div>
 
       <div className="setting">
-        <label>Google Calendar</label>
+        <label>Calendar reminders</label>
         <div className="desc">
-          Connect once to add events automatically. On any thought in <strong>Triage</strong> or{" "}
-          <strong>Board</strong>, click <strong>Calendar</strong> (or press <strong>g</strong> in
-          Triage). If there&apos;s no due time yet, you&apos;ll be asked when to schedule it.
-          Voice notes with a due time (e.g. &quot;call mom tomorrow at 6&quot;) auto-add after
-          capture when connected.
+          <strong>Recommended:</strong> set a due time on any thought (press <strong>t</strong> in
+          Triage), then press <strong>i</strong> to download a <code>.ics</code> file. Import it
+          into Google Calendar, Outlook, or Apple Calendar — phone alerts work with zero sign-in.
+          Desktop notifications still fire when Tangent is running.
+        </div>
+      </div>
+
+      <div className="setting">
+        <label>Google Calendar (optional)</label>
+        <div className="desc">
+          Advanced: connect once for automatic event creation. Google may show verification warnings
+          for new apps — if that feels risky, use <code>.ics</code> export instead (above). When
+          connected, <strong>Set due</strong> / <strong>t</strong> auto-creates events. Day-only
+          phrases like &quot;tonight&quot; get a tentative evening time you can adjust.
         </div>
         {isGoogleOAuthConfigured() ? (
           <div className="row" style={{ marginTop: 12, gap: 10 }}>
@@ -463,7 +539,7 @@ export default function Settings() {
                   onClick={() => void onDisconnectGoogle()}
                   disabled={googleBusy}
                 >
-                  Disconnect
+                  {googleBusy ? "Disconnecting…" : "Disconnect"}
                 </button>
               </>
             ) : (
@@ -480,10 +556,10 @@ export default function Settings() {
         {isGoogleOAuthConfigured() && (
           <>
             <div style={{ marginTop: 14 }}>
-              <label>Phone check-in reminders</label>
+              <label>Phone check-in reminders (Google Calendar)</label>
               <div className="desc">
-                Uses a separate <strong>Tangent Reminders</strong> calendar so your main
-                calendar stays clean. Saving replaces the old schedule (no duplicates).
+                Separate from desktop triage pings above. Uses a <strong>Tangent Reminders</strong>{" "}
+                calendar so your main calendar stays clean. Saving replaces the old schedule.
               </div>
               <select
                 value={s.googleCalendarPhoneMode ?? "off"}
@@ -533,10 +609,10 @@ export default function Settings() {
             </div>
             <div className="row" style={{ marginTop: 14 }}>
               <div>
-                <label>Reminders on task events</label>
+                <label>Alerts on task calendar events</label>
                 <div className="desc">
-                  Popup alerts before timed thoughts added to Calendar ({calendarReminderLabel(s)}
-                  ).
+                  Google Calendar popup before timed thoughts ({calendarReminderLabel(s)}). This is
+                  separate from desktop triage nudges.
                 </div>
               </div>
               <input
@@ -549,12 +625,15 @@ export default function Settings() {
         )}
       </div>
 
-      <div className="row" style={{ marginTop: 18, gap: 10 }}>
+      <div className="row" style={{ marginTop: 18, gap: 10, flexWrap: "wrap" }}>
         <button className="btn" onClick={() => void onSave()} disabled={saving || googleBusy}>
           {saving ? "Saving…" : "Save settings"}
         </button>
-        <button className="btn danger" onClick={onWipe}>
-          Wipe all data
+        <button className="btn secondary" type="button" onClick={() => void onExport()}>
+          Export thoughts
+        </button>
+        <button className="btn danger" type="button" onClick={() => void onWipe()}>
+          Delete all thoughts
         </button>
       </div>
 

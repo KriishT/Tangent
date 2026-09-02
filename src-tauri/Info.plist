@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Tangent records short voice notes when you hold the capture hotkey.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Tangent returns focus to the app you were using before capture.</string>
+</dict>
+</plist>

@@ -41,7 +41,7 @@ flowchart LR
   triage --> resurface
 ```
 
-**How you win in one sentence:** You protect the ~23-minute refocus tax ([01-user-research.md](../../docs/01-user-research.md)) by making capture cost ~2 seconds *and* giving parked thoughts a path back (triage + due dates + notifications)—with **work context** no phone or dictation tool attaches.
+**How you win in one sentence:** When developers get interrupted, they hunt for context — Tangent stores it at capture time and runs the park → triage → resurface loop. See [../../docs/11-strategic-assessment-2026.md](../../docs/11-strategic-assessment-2026.md).
 
 **Retention risk (still #1):** If users capture but never triage, the inbox becomes a graveyard. Every feature below should reinforce "pipeline, not graveyard."
 

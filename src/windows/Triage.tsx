@@ -5,28 +5,48 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Bucket, Thought } from "../lib/types";
 import { BUCKET_LABELS, BUCKET_ORDER } from "../lib/types";
 import {
-  deleteThought,
+  getThought,
   insertThought,
   listUntriaged,
   search as searchDb,
   setBucket,
   updateBody,
-  setDueAt,
 } from "../lib/db";
-import { parseDueDate, buildContextFields, parseContextExtra } from "../lib/parse";
+import {
+  parseDueDateInfo,
+  buildContextFields,
+  parseContextExtra,
+  resolvedDueAt,
+  isTentativeDue,
+  formatDueTimeLabel,
+  dueClassName,
+} from "../lib/parse";
 import { loadSettings, isBlocked } from "../lib/settings";
 import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
 import { formatHotkeyDisplay } from "../lib/hotkeyFormat";
 import {
-  addThoughtToGoogleCalendarWithDue,
+  scheduleThoughtDueTime,
   messageForCalendarOutcome,
+  deleteThoughtWithCalendar,
+  removeThoughtCalendarEvent,
+  autoAddThoughtToGoogleCalendarIfConnected,
+  addThoughtToGoogleCalendar,
 } from "../lib/googleCalendar";
+import { exportIcsForThought } from "../lib/calendar";
 
 type TriageProps = {
   /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
   dataRev?: number;
 };
+
+function statusLabel(t: Thought): string | null {
+  if (t.completed_at) {
+    return t.bucket === "dropped" ? "Dropped" : "Done";
+  }
+  if (t.bucket) return BUCKET_LABELS[t.bucket];
+  return null;
+}
 
 export default function Triage({ dataRev = 0 }: TriageProps) {
   const { confirm, prompt } = useDialog();
@@ -37,12 +57,15 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   const [hotkey, setHotkey] = useState("CommandOrControl+Shift+Space");
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState("");
+  const [transcribing, setTranscribing] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const flash = (msg: string) => {
+  const flash = useCallback((msg: string, ms = 2200) => {
     setToast(msg);
-    setTimeout(() => setToast(""), 1800);
-  };
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), ms);
+  }, []);
 
   useEffect(() => {
     void loadSettings().then((s) => setHotkey(s.hotkey));
@@ -58,7 +81,6 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     void reload();
   }, [reload, dataRev]);
 
-  // Refresh when a voice capture adds a thought (broadcast event).
   useEffect(() => {
     const un = listen("thought-added", () => void reload());
     return () => {
@@ -67,21 +89,29 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   }, [reload]);
 
   useEffect(() => {
-    const un = listen<{ outcome: string; detail?: string | null }>("voice-capture-result", (e) => {
-      const { outcome, detail } = e.payload;
-      if (outcome === "saved") {
-        flash("Voice note saved");
-        void reload();
-        return;
-      }
-      if (detail) flash(detail);
+    const un = listen<{ active: boolean }>("voice-transcribing", (e) => {
+      setTranscribing(e.payload.active);
     });
     return () => {
       un.then((f) => f());
     };
-  }, [reload]);
+  }, []);
 
-  // Refresh when the main window is shown/focused (e.g. after tray capture).
+  useEffect(() => {
+    const un = listen<{ outcome: string; detail?: string | null }>("voice-capture-result", (e) => {
+      const { outcome, detail } = e.payload;
+      if (outcome === "saved") {
+        flash(detail?.trim() ? detail : "Voice note saved");
+        void reload();
+        return;
+      }
+      if (detail) flash(detail, 3200);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [reload, flash]);
+
   useEffect(() => {
     const win = getCurrentWindow();
     const unFocus = win.onFocusChanged(({ payload: focused }) => {
@@ -125,26 +155,49 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
       }
     }
 
-    await insertThought({
+    const dueInfo = parseDueDateInfo(body);
+    const dueAt = resolvedDueAt(dueInfo);
+
+    const id = await insertThought({
       body,
       source: "type",
-      due_at: parseDueDate(body),
+      due_at: dueAt,
       ctx_app: ctxApp,
       ctx_title: ctxTitle,
       ctx_detail: ctxDetail,
       ctx_extra: ctxExtra,
     });
     setDraft("");
+
+    if (dueAt) {
+      const thought = await getThought(id);
+      if (thought) {
+        const cal = await autoAddThoughtToGoogleCalendarIfConnected(thought);
+        if (cal && cal.outcome === "auth_disconnected") {
+          flash(messageForCalendarOutcome(cal), 4000);
+        }
+      }
+    }
+
     await reload();
+    if (dueAt && isTentativeDue(dueInfo)) {
+      flash(`Due ${formatDueTimeLabel(dueAt)} — tap Change due to adjust`);
+    }
     void emit("thought-added", {}).catch(() => {});
-  }, [draft, reload]);
+  }, [draft, reload, flash]);
 
   const sort = useCallback(
     async (id: number, bucket: Bucket) => {
+      const t = items.find((x) => x.id === id) ?? (await getThought(id));
+      if (t && (bucket === "dropped" || t.calendar_event_id)) {
+        if (bucket === "dropped") {
+          await removeThoughtCalendarEvent(t);
+        }
+      }
       await setBucket(id, bucket);
       await reload();
     },
-    [reload]
+    [reload, items]
   );
 
   const edit = useCallback(
@@ -172,7 +225,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         variant: "danger",
       });
       if (ok) {
-        await deleteThought(t.id);
+        await deleteThoughtWithCalendar(t);
         await reload();
       }
     },
@@ -186,34 +239,102 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     } catch {
       flash("Could not copy");
     }
-  }, []);
+  }, [flash]);
 
-  const calendar = useCallback(async (t: Thought) => {
-    const result = await addThoughtToGoogleCalendarWithDue(
-      t,
-      () =>
+  const manageDueTime = useCallback(
+    async (t: Thought) => {
+      const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
         prompt({
-          title: "Add to Google Calendar",
-          message:
-            "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM, Jun 26 7:30 PM",
-          confirmLabel: "Add to Calendar",
+          title: hasDue ? "Change due time" : "Set due time",
+          message: hasDue
+            ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
+            : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
+          defaultValue: "",
+          confirmLabel: hasDue ? "Update" : "Set due time",
+          allowEmpty: hasDue,
         }),
-      setDueAt
-    );
-    if (result.outcome === "cancelled") return;
-    flash(messageForCalendarOutcome(result));
-    if (result.outcome === "created" || result.outcome === "opened") {
-      await reload();
-    }
-  }, [prompt, reload]);
+      );
+      if (result.outcome === "cancelled") return;
+      const msg = messageForCalendarOutcome(result);
+      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+      if (
+        result.outcome === "created" ||
+        result.outcome === "opened" ||
+        result.outcome === "updated" ||
+        result.outcome === "cleared" ||
+        result.outcome === "auth_disconnected" ||
+        result.outcome === "bad_due" ||
+        result.outcome === "failed"
+      ) {
+        await reload();
+      }
+    },
+    [prompt, reload, flash],
+  );
+
+  const addToGoogleCalendar = useCallback(
+    async (t: Thought) => {
+      if (!t.due_at) {
+        const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
+          prompt({
+            title: "Add to Google Calendar",
+            message: hasDue
+              ? `Current: ${currentDueLabel}\n\nWhen should this appear on your calendar?\nLeave blank to clear.`
+              : "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
+            defaultValue: "",
+            confirmLabel: "Add to calendar",
+            allowEmpty: hasDue,
+          }),
+        );
+        if (result.outcome === "cancelled") return;
+        const msg = messageForCalendarOutcome(result);
+        if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+        if (
+          result.outcome === "created" ||
+          result.outcome === "opened" ||
+          result.outcome === "updated" ||
+          result.outcome === "cleared" ||
+          result.outcome === "auth_disconnected" ||
+          result.outcome === "bad_due" ||
+          result.outcome === "failed"
+        ) {
+          await reload();
+        }
+        return;
+      }
+
+      const result = await addThoughtToGoogleCalendar(t);
+      const msg = messageForCalendarOutcome(result);
+      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+      if (
+        result.outcome === "created" ||
+        result.outcome === "opened" ||
+        result.outcome === "auth_disconnected" ||
+        result.outcome === "failed"
+      ) {
+        await reload();
+      }
+    },
+    [prompt, reload, flash],
+  );
+
+  const exportIcs = useCallback(
+    async (t: Thought) => {
+      if (!t.due_at) {
+        flash("Set a due time first (press t)");
+        return;
+      }
+      const result = await exportIcsForThought(t);
+      if (result === "saved") flash("Calendar file downloaded — import into your calendar app");
+      else if (result === "no_due") flash("No due time on this thought");
+    },
+    [flash],
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // If any dialog/prompt is open, don't run global shortcuts.
-      // (e.g. typing "June" inside the calendar prompt should not trigger "e" for edit)
       if (document.querySelector(".dialog-backdrop")) return;
 
-      // If the user is typing in an input/textarea/select/contenteditable element, ignore shortcuts.
       const target = e.target as HTMLElement | null;
       if (target) {
         const tag = target.tagName;
@@ -229,7 +350,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         setSelected((s) => Math.max(s - 1, 0));
       } else if (e.key >= "1" && e.key <= "5") {
         const t = items[selected];
-        if (t) void sort(t.id, BUCKET_ORDER[Number(e.key) - 1]);
+        if (t && !t.completed_at) void sort(t.id, BUCKET_ORDER[Number(e.key) - 1]);
       } else if (e.key === "e") {
         const t = items[selected];
         if (t) {
@@ -248,11 +369,17 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           e.preventDefault();
           void copy(t);
         }
-      } else if (e.key === "g") {
+      } else if (e.key === "i") {
         const t = items[selected];
-        if (t) {
+        if (t && !t.completed_at) {
           e.preventDefault();
-          void calendar(t);
+          void addToGoogleCalendar(t);
+        }
+      } else if (e.key === "t" || e.key === "g") {
+        const t = items[selected];
+        if (t && !t.completed_at) {
+          e.preventDefault();
+          void manageDueTime(t);
         }
       } else if (e.key === "/") {
         e.preventDefault();
@@ -262,7 +389,9 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, selected, searching, sort, edit, remove, copy, calendar]);
+  }, [items, selected, searching, sort, edit, remove, copy, manageDueTime, addToGoogleCalendar]);
+
+  const inSearch = Boolean(query.trim());
 
   return (
     <div>
@@ -270,13 +399,19 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         <div>
           <div className="page-title">Triage</div>
           <div className="page-sub">
-            {items.length} {query ? "result" : "parked"}
+            {items.length} {inSearch ? "result" : "parked"}
             {items.length === 1 ? "" : "s"} · hold{" "}
-            <strong>{formatHotkeyDisplay(hotkey)}</strong> to speak · j/k move · 1-5
-            sort · e edit · d delete · g calendar · / search
+            <strong>{formatHotkeyDisplay(hotkey)}</strong> to speak · j/k · 1-5 · e · t due · i Google Calendar · d · /
           </div>
         </div>
       </div>
+
+      {transcribing && (
+        <div className="voice-status" role="status" aria-live="polite">
+          <span className="voice-status-spinner" aria-hidden />
+          Transcribing voice note…
+        </div>
+      )}
 
       <div className="quick-add quick-add-hero">
         <input
@@ -301,7 +436,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           ref={searchRef}
           className="capture-input"
           style={{ marginBottom: 16 }}
-          placeholder="Search thoughts..."
+          placeholder="Search all thoughts…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onBlur={() => setSearching(false)}
@@ -316,55 +451,132 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
 
       {items.length === 0 ? (
         <div className="empty">
-          Inbox at zero. Nice.
-          <br />
-          Hold <strong>{formatHotkeyDisplay(hotkey)}</strong> anywhere and speak —
-          release to save, without leaving what you're doing.
+          {inSearch ? (
+            <>No matches for that search.</>
+          ) : (
+            <>
+              Inbox at zero. Nice.
+              <br />
+              Hold <strong>{formatHotkeyDisplay(hotkey)}</strong> anywhere and speak —
+              release to save, without leaving what you&apos;re doing.
+            </>
+          )}
         </div>
       ) : (
-        items.map((t, i) => (
-          <div key={t.id} className={`thought${i === selected ? " selected" : ""}`}>
-            <div className="thought-body">{t.body}</div>
-            <div className="thought-meta">
-              <span>
-                {parseContextExtra(t.ctx_extra)?.captured_at_local ??
-                  new Date(t.created_at).toLocaleString()}
-              </span>
-              {t.ctx_detail && (
-                <span title={t.ctx_title ?? undefined}>
-                  in {t.ctx_app ?? "app"} · {t.ctx_detail}
+        items.map((t, i) => {
+          const status = inSearch ? statusLabel(t) : null;
+          const parked = !t.bucket && !t.completed_at;
+          return (
+            <div
+              key={t.id}
+              className={`thought${i === selected ? " selected" : ""}`}
+              onClick={() => setSelected(i)}
+              role="option"
+              aria-selected={i === selected}
+            >
+              <div className="thought-body">{t.body}</div>
+              <div className="thought-meta">
+                <span>
+                  {parseContextExtra(t.ctx_extra)?.captured_at_local ??
+                    new Date(t.created_at).toLocaleString()}
                 </span>
+                {status && <span className="tag-status">{status}</span>}
+                {inSearch && parked && <span className="tag-status">Parked</span>}
+                {t.ctx_detail && (
+                  <span title={t.ctx_title ?? undefined}>
+                    in {t.ctx_app ?? "app"} · {t.ctx_detail}
+                  </span>
+                )}
+                {t.due_at && !t.completed_at && (
+                  <span className={dueClassName(t.due_at)}>
+                    due{" "}
+                    {new Date(t.due_at).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                )}
+                {t.source === "voice" && <span>voice</span>}
+                {t.calendar_event_id && <span className="tag-calendar">Google Calendar</span>}
+              </div>
+              {(t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
+              {!t.completed_at && (
+                <div className="bucket-row">
+                  {BUCKET_ORDER.map((b, idx) => (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => void sort(t.id, b)}
+                      title={b === "dropped" ? "Drop — moves to Done history" : undefined}
+                    >
+                      [{idx + 1}] {BUCKET_LABELS[b]}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => void manageDueTime(t)}
+                    title={
+                      t.due_at
+                        ? "Change due time (also updates Google Calendar when connected)"
+                        : "Set a due time (adds to Google Calendar when connected)"
+                    }
+                  >
+                    [t] {t.due_at ? "Change due" : "Set due"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void addToGoogleCalendar(t)}
+                    title={
+                      t.calendar_event_id
+                        ? "Synced to Google Calendar — click to update"
+                        : t.due_at
+                          ? "Add or update on Google Calendar"
+                          : "Set a time and add to Google Calendar"
+                    }
+                  >
+                    [i] Google Calendar
+                  </button>
+                  {t.due_at && (
+                    <button
+                      type="button"
+                      onClick={() => void exportIcs(t)}
+                      title="Download .ics for Outlook, Apple Calendar, etc."
+                    >
+                      Download .ics
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void copy(t)}>
+                    [c] Copy
+                  </button>
+                  <button type="button" onClick={() => void edit(t)}>
+                    [e] Edit
+                  </button>
+                  <button type="button" className="del" onClick={() => void remove(t)}>
+                    [d] Delete
+                  </button>
+                </div>
               )}
-              {t.due_at && <span className="due">due {new Date(t.due_at).toLocaleDateString()}</span>}
-              {t.source === "voice" && <span>voice</span>}
+              {t.completed_at && (
+                <div className="bucket-row">
+                  <button type="button" onClick={() => void copy(t)}>
+                    [c] Copy
+                  </button>
+                  <button type="button" className="del" onClick={() => void remove(t)}>
+                    [d] Delete
+                  </button>
+                </div>
+              )}
             </div>
-            {(t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
-            <div className="bucket-row">
-              {BUCKET_ORDER.map((b, idx) => (
-                <button key={b} onClick={() => sort(t.id, b)}>
-                  [{idx + 1}] {BUCKET_LABELS[b]}
-                </button>
-              ))}
-              <button
-                onClick={() => void calendar(t)}
-                title={
-                  t.due_at
-                    ? "Add to Google Calendar"
-                    : "Pick a time and add to Google Calendar"
-                }
-              >
-                [g] Calendar
-              </button>
-              <button onClick={() => void copy(t)}>[c] Copy</button>
-              <button onClick={() => edit(t)}>[e] Edit</button>
-              <button className="del" onClick={() => remove(t)}>
-                [d] Delete
-              </button>
-            </div>
-          </div>
-        ))
+          );
+        })
       )}
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

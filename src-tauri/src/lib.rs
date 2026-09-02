@@ -4,7 +4,7 @@ mod google_calendar;
 mod voice;
 
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
@@ -55,11 +55,16 @@ async fn begin_voice(app: tauri::AppHandle) -> Result<context::WorkContext, Stri
         let _ = win.center();
         let _ = win.set_always_on_top(true);
         let _ = win.show();
-        let _ = app.emit_to("capture", "voice-start", ctx.clone());
+        let _ = app.emit_to("capture", "voice-phase", "warming");
     }
     #[cfg(feature = "voice")]
     {
         voice::start_recording()?;
+    }
+    if let Some(win) = app.get_webview_window("capture") {
+        let _ = win.set_always_on_top(true);
+        let _ = app.emit_to("capture", "voice-phase", "listening");
+        let _ = app.emit_to("capture", "voice-start", ctx.clone());
     }
     Ok(ctx)
 }
@@ -109,6 +114,13 @@ async fn google_calendar_create_event(
 }
 
 #[tauri::command]
+async fn google_calendar_delete_event(
+    params: google_calendar::DeleteEventParams,
+) -> Result<google_calendar::DeleteEventResult, String> {
+    google_calendar::delete_task_calendar_event(params).await
+}
+
+#[tauri::command]
 async fn google_calendar_sync_checkin(
     params: google_calendar::SyncCheckInParams,
 ) -> Result<google_calendar::SyncCheckInResult, String> {
@@ -125,6 +137,18 @@ fn voice_resolve_model_path(app: tauri::AppHandle, configured: String) -> Result
     {
         let _ = (app, configured);
         Err("voice feature not enabled in this build".into())
+    }
+}
+
+#[tauri::command]
+fn voice_warm_microphone() -> Result<(), String> {
+    #[cfg(feature = "voice")]
+    {
+        voice::warm_microphone()
+    }
+    #[cfg(not(feature = "voice"))]
+    {
+        Ok(())
     }
 }
 
@@ -182,6 +206,12 @@ pub fn run() {
             sql: include_str!("../migrations/002_ctx_extra.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "calendar_event_id for task reminders",
+            sql: include_str!("../migrations/003_calendar_event.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -206,7 +236,7 @@ pub fn run() {
 
             let mut tray = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
-                .tooltip("Tangent")
+                .tooltip("Tangent — click to open")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -223,6 +253,20 @@ pub fn run() {
                     }
                     "quit" => app.exit(0),
                     _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
                 });
 
             if let Some(icon) = app.default_window_icon() {
@@ -242,9 +286,11 @@ pub fn run() {
             google_oauth_connect,
             google_oauth_revoke,
             google_calendar_create_event,
+            google_calendar_delete_event,
             google_calendar_sync_checkin,
             voice_resolve_model_path,
             voice_preload_model,
+            voice_warm_microphone,
             voice_test_microphone,
             voice_start,
             voice_stop_transcribe

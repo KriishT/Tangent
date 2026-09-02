@@ -1,7 +1,7 @@
 {
   "name": "tangent",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Tangent - catch every stray thought without leaving what you're doing.",
   "scripts": {
@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "ensure-model": "node scripts/ensure-whisper-model.mjs",
-    "tauri:dev": "npm run ensure-model && tauri dev",
-    "tauri:build": "npm run ensure-model && tauri build",
+    "tauri:dev": "npm run ensure-model && tauri dev -- --features voice",
+    "tauri:build": "npm run ensure-model && tauri build -- --features voice",
     "tauri:build:voice": "npm run ensure-model && tauri build -- --features voice"
   },
   "dependencies": {

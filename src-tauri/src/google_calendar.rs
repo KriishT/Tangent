@@ -73,6 +73,7 @@ pub struct CreateEventParams {
 #[serde(rename_all = "camelCase")]
 pub struct CreateEventResult {
     pub html_link: String,
+    pub event_id: Option<String>,
     pub tokens: GoogleTokens,
 }
 
@@ -173,55 +174,65 @@ fn pkce_pair() -> (String, String) {
 async fn wait_for_auth_code(listener: tokio::net::TcpListener) -> Result<String, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let timeout = Duration::from_secs(300);
-    let accept = tokio::time::timeout(timeout, listener.accept())
-        .await
-        .map_err(|_| "Sign-in timed out. Try again.".to_string())?
-        .map_err(|e| e.to_string())?;
-    let (mut stream, _) = accept;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
 
-    let mut buf = vec![0u8; 8192];
-    let n = stream
-        .read(&mut buf)
-        .await
-        .map_err(|e| format!("Could not read OAuth callback: {e}"))?;
-    let req = String::from_utf8_lossy(&buf[..n]);
-    let first_line = req.lines().next().unwrap_or("");
-    let path = first_line.split_whitespace().nth(1).unwrap_or("");
-    let query = path.split('?').nth(1).unwrap_or("");
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("Sign-in timed out. Try again.".to_string());
+        }
 
-    let mut code: Option<String> = None;
-    let mut oauth_error: Option<String> = None;
-    for pair in query.split('&') {
-        let mut kv = pair.splitn(2, '=');
-        let key = kv.next().unwrap_or("");
-        let value = kv
-            .next()
-            .map(|s| urlencoding::decode(s).unwrap_or_default().into_owned())
-            .unwrap_or_default();
-        match key {
-            "code" => code = Some(value),
-            "error" => oauth_error = Some(value),
-            _ => {}
+        let accept = tokio::time::timeout(remaining, listener.accept())
+            .await
+            .map_err(|_| "Sign-in timed out. Try again.".to_string())?
+            .map_err(|e| e.to_string())?;
+        let (mut stream, _) = accept;
+
+        let mut buf = vec![0u8; 8192];
+        let n = stream
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("Could not read OAuth callback: {e}"))?;
+        let req = String::from_utf8_lossy(&buf[..n]);
+        let first_line = req.lines().next().unwrap_or("");
+        let path = first_line.split_whitespace().nth(1).unwrap_or("");
+        let query = path.split('?').nth(1).unwrap_or("");
+
+        let mut code: Option<String> = None;
+        let mut oauth_error: Option<String> = None;
+        for pair in query.split('&') {
+            let mut kv = pair.splitn(2, '=');
+            let key = kv.next().unwrap_or("");
+            let value = kv
+                .next()
+                .map(|s| urlencoding::decode(s).unwrap_or_default().into_owned())
+                .unwrap_or_default();
+            match key {
+                "code" => code = Some(value),
+                "error" => oauth_error = Some(value),
+                _ => {}
+            }
+        }
+
+        let body = if code.is_some() {
+            "<html><body style=\"font-family:system-ui,sans-serif;padding:2rem\"><h2>Tangent</h2><p>Google Calendar connected. You can close this tab.</p></body></html>"
+        } else {
+            "<html><body style=\"font-family:system-ui,sans-serif;padding:2rem\"><h2>Tangent</h2><p>Waiting for Google sign-in…</p></body></html>"
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+
+        if let Some(err) = oauth_error {
+            return Err(format!("Google sign-in failed: {err}"));
+        }
+        if let Some(c) = code.filter(|s| !s.is_empty()) {
+            return Ok(c);
         }
     }
-
-    let body = if code.is_some() {
-        "<html><body style=\"font-family:system-ui,sans-serif;padding:2rem\"><h2>Tangent</h2><p>Google Calendar connected. You can close this tab.</p></body></html>"
-    } else {
-        "<html><body style=\"font-family:system-ui,sans-serif;padding:2rem\"><h2>Tangent</h2><p>Sign-in was cancelled or failed. Return to the app and try again.</p></body></html>"
-    };
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-
-    if let Some(err) = oauth_error {
-        return Err(format!("Google sign-in failed: {err}"));
-    }
-    code.ok_or_else(|| "No authorization code received".to_string())
 }
 
 async fn exchange_code(
@@ -530,8 +541,55 @@ pub async fn create_calendar_event(params: CreateEventParams) -> Result<CreateEv
 
     Ok(CreateEventResult {
         html_link,
+        event_id: created.id,
         tokens,
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteEventParams {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub tokens: GoogleTokens,
+    pub event_id: String,
+    #[serde(default)]
+    pub calendar_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteEventResult {
+    pub tokens: GoogleTokens,
+}
+
+/// Delete a previously created task event from the primary calendar (or a given calendar).
+pub async fn delete_task_calendar_event(
+    params: DeleteEventParams,
+) -> Result<DeleteEventResult, String> {
+    if params.client_id.trim().is_empty() {
+        return Err("Google Client ID is required.".into());
+    }
+    if params.event_id.trim().is_empty() {
+        return Err("Event id is required.".into());
+    }
+
+    let client_secret = params.client_secret.as_deref();
+    let tokens = ensure_fresh_tokens(
+        &params.client_id,
+        client_secret,
+        &params.tokens,
+    )
+    .await?;
+
+    let calendar_id = params
+        .calendar_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("primary");
+
+    delete_calendar_event(&tokens.access_token, calendar_id, &params.event_id).await?;
+    Ok(DeleteEventResult { tokens })
 }
 
 #[derive(Debug, Deserialize)]

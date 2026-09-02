@@ -72,9 +72,12 @@ export async function listByBucket(bucket: Bucket): Promise<Thought[]> {
 
 export async function search(q: string): Promise<Thought[]> {
   const d = await db();
+  // Strip LIKE wildcards so user input can't match everything accidentally.
+  const safe = q.replace(/[%_]/g, "");
+  if (!safe.trim()) return [];
   return d.select<Thought[]>(
     `SELECT * FROM thoughts WHERE body LIKE $1 ORDER BY created_at DESC LIMIT 200`,
-    [`%${q}%`]
+    [`%${safe}%`]
   );
 }
 
@@ -93,9 +96,10 @@ export async function setBucket(id: number, bucket: Bucket): Promise<void> {
     completedAt = now;
   }
 
+  // Reset notified_at so a new due/resurface can fire again.
   await d.execute(
     `UPDATE thoughts
-       SET bucket = $1, triaged_at = $2, resurface_at = $3, completed_at = $4
+       SET bucket = $1, triaged_at = $2, resurface_at = $3, completed_at = $4, notified_at = NULL
      WHERE id = $5`,
     [bucket, now, resurfaceAt, completedAt, id]
   );
@@ -112,7 +116,7 @@ export async function moveToBoardColumn(id: number, target: Bucket | "done"): Pr
   const resurfaceAt = target === "do_soon" ? nextMorningISO(morningHour) : null;
   await d.execute(
     `UPDATE thoughts
-       SET bucket = $1, triaged_at = $2, completed_at = NULL, resurface_at = $3
+       SET bucket = $1, triaged_at = $2, completed_at = NULL, resurface_at = $3, notified_at = NULL
      WHERE id = $4`,
     [target, now, resurfaceAt, id]
   );
@@ -153,9 +157,26 @@ export async function updateBody(id: number, body: string): Promise<void> {
   await d.execute(`UPDATE thoughts SET body = $1 WHERE id = $2`, [body, id]);
 }
 
-export async function setDueAt(id: number, dueAt: string): Promise<void> {
+export async function setDueAt(id: number, dueAt: string | null): Promise<void> {
   const d = await db();
-  await d.execute(`UPDATE thoughts SET due_at = $1 WHERE id = $2`, [dueAt, id]);
+  // Changing due time always re-arms desktop reminders.
+  await d.execute(
+    `UPDATE thoughts SET due_at = $1, notified_at = NULL WHERE id = $2`,
+    [dueAt, id],
+  );
+}
+
+/** Thoughts that still have a linked Google Calendar event (for wipe cleanup). */
+export async function listWithCalendarEvents(): Promise<Thought[]> {
+  const d = await db();
+  return d.select<Thought[]>(
+    `SELECT * FROM thoughts WHERE calendar_event_id IS NOT NULL AND calendar_event_id != ''`,
+  );
+}
+
+export async function setCalendarEventId(id: number, eventId: string | null): Promise<void> {
+  const d = await db();
+  await d.execute(`UPDATE thoughts SET calendar_event_id = $1 WHERE id = $2`, [eventId, id]);
 }
 
 /** Permanently remove a thought. */
@@ -202,17 +223,27 @@ export interface Stats {
   caught: number;
   triaged: number;
   parked: number;
+  /** Captured thoughts that were never sorted into a bucket. */
+  never_triaged: number;
+  /** Share of all captures that reached triage (0–100). */
+  triage_rate_pct: number;
 }
 
 export async function stats(): Promise<Stats> {
   const d = await db();
-  const rows = await d.select<{ caught: number; triaged: number; parked: number }[]>(
+  const rows = await d.select<
+    { caught: number; triaged: number; parked: number; never_triaged: number }[]
+  >(
     `SELECT
        (SELECT COUNT(*) FROM thoughts) AS caught,
        (SELECT COUNT(*) FROM thoughts WHERE triaged_at IS NOT NULL) AS triaged,
-       (SELECT COUNT(*) FROM thoughts WHERE bucket IS NULL AND completed_at IS NULL) AS parked`
+       (SELECT COUNT(*) FROM thoughts WHERE bucket IS NULL AND completed_at IS NULL) AS parked,
+       (SELECT COUNT(*) FROM thoughts WHERE triaged_at IS NULL AND completed_at IS NULL) AS never_triaged`
   );
-  return rows[0] ?? { caught: 0, triaged: 0, parked: 0 };
+  const row = rows[0] ?? { caught: 0, triaged: 0, parked: 0, never_triaged: 0 };
+  const triage_rate_pct =
+    row.caught > 0 ? Math.round((row.triaged / row.caught) * 100) : 0;
+  return { ...row, triage_rate_pct };
 }
 
 export async function exportAll(): Promise<string> {

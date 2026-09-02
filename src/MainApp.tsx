@@ -1,24 +1,53 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { DialogProvider } from "./components/DialogProvider";
 import Logo from "./components/Logo";
+import ThemeToggle from "./components/ThemeToggle";
 import Triage from "./windows/Triage";
 import Lists from "./windows/Lists";
 import Settings from "./windows/Settings";
+import Stats from "./windows/Stats";
 import { applyHotkey } from "./lib/hotkey";
 import { preloadVoiceModel } from "./lib/voiceCapture";
 import { ensureNotifications, maybeTriageNudge, runResurfaceTick } from "./lib/resurface";
+import { loadSettings, saveSettings, type ThemeMode } from "./lib/settings";
+import { applyTheme, watchSystemTheme } from "./lib/theme";
 
-type Tab = "triage" | "lists" | "settings";
+type Tab = "triage" | "lists" | "stats" | "settings";
 
 export default function MainApp() {
   const [tab, setTab] = useState<Tab>("triage");
   const [dataRev, setDataRev] = useState(0);
+  const [theme, setTheme] = useState<ThemeMode>("system");
+
+  const onThemeChange = useCallback(async (next: ThemeMode) => {
+    setTheme(next);
+    applyTheme(next);
+    const s = await loadSettings();
+    await saveSettings({ ...s, theme: next });
+  }, []);
 
   useEffect(() => {
-    void applyHotkey().catch(() => {});
+    void loadSettings().then((s) => {
+      setTheme(s.theme);
+      applyTheme(s.theme);
+    });
+    const unwatch = watchSystemTheme(() => {
+      void loadSettings().then((s) => {
+        if (s.theme === "system") applyTheme("system");
+      });
+    });
+    return unwatch;
+  }, []);
+
+  useEffect(() => {
+    void applyHotkey().then((err) => {
+      if (err) {
+        void sendNotification({ title: "Tangent — hotkey", body: err });
+      }
+    });
     void preloadVoiceModel();
 
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -39,16 +68,26 @@ export default function MainApp() {
     });
     const unTriage = listen("go-triage", () => setTab("triage"));
     const unThought = listen("thought-added", () => setDataRev((n) => n + 1));
+    const unTranscribing = listen<{ active: boolean }>("voice-transcribing", (e) => {
+      if (e.payload.active) setTab("triage");
+    });
     const unVoice = listen<{ outcome: string; detail?: string | null }>(
       "voice-capture-result",
       (e) => {
         const { outcome, detail } = e.payload;
         if (outcome === "saved") {
           setTab("triage");
+          setDataRev((n) => n + 1);
+          if (detail?.trim()) {
+            void sendNotification({ title: "Tangent", body: detail });
+          }
           return;
         }
-        if (outcome === "error" && detail) {
-          void sendNotification({ title: "Tangent — voice capture", body: detail });
+        if (detail) {
+          void sendNotification({
+            title: outcome === "error" ? "Tangent — voice capture" : "Tangent",
+            body: detail,
+          });
         }
       }
     );
@@ -58,6 +97,7 @@ export default function MainApp() {
       unClose.then((f) => f());
       unTriage.then((f) => f());
       unThought.then((f) => f());
+      unTranscribing.then((f) => f());
       unVoice.then((f) => f());
     };
   }, []);
@@ -65,6 +105,7 @@ export default function MainApp() {
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "triage", label: "Triage", icon: "◎" },
     { id: "lists", label: "Board", icon: "▦" },
+    { id: "stats", label: "Stats", icon: "◈" },
     { id: "settings", label: "Settings", icon: "⚙" },
   ];
 
@@ -89,11 +130,17 @@ export default function MainApp() {
               </button>
             ))}
           </nav>
+          <div className="sidebar-footer">
+            <ThemeToggle value={theme} onChange={(m) => void onThemeChange(m)} compact />
+          </div>
         </aside>
         <main className="content">
           {tab === "triage" && <Triage dataRev={dataRev} />}
           {tab === "lists" && <Lists />}
-          {tab === "settings" && <Settings />}
+          {tab === "stats" && <Stats />}
+          {tab === "settings" && (
+            <Settings theme={theme} onThemeChange={(m) => void onThemeChange(m)} />
+          )}
         </main>
       </div>
     </DialogProvider>

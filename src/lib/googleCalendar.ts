@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Thought } from "./types";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./settings";
 import { googleCalendarUrlForThought } from "./calendar";
 import { parseDueInput } from "./parse";
+import { setCalendarEventId, setDueAt, listWithCalendarEvents, wipeAll, deleteThought } from "./db";
 import {
   GOOGLE_OAUTH_CLIENT_ID,
   GOOGLE_OAUTH_CLIENT_SECRET,
@@ -47,6 +49,11 @@ export interface GoogleOAuthResult {
 
 interface CreateEventResult {
   htmlLink: string;
+  eventId?: string | null;
+  tokens: GoogleTokens;
+}
+
+interface DeleteEventResult {
   tokens: GoogleTokens;
 }
 
@@ -241,6 +248,56 @@ export async function connectGoogleCalendar(): Promise<GoogleOAuthResult> {
   return result;
 }
 
+export const GOOGLE_DISCONNECTED_MESSAGE =
+  "Google Calendar disconnected — session expired. Reconnect in Settings when you're ready.";
+
+export function isGoogleAuthExpiredError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("invalid_grant") ||
+    m.includes("token has been expired") ||
+    m.includes("token has been revoked")
+  );
+}
+
+export function formatDueDisplay(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function clearGoogleConnectionState(settings: AppSettings): Promise<AppSettings> {
+  const cleared: AppSettings = {
+    ...settings,
+    googleEmail: undefined,
+    googleTokens: undefined,
+    googleCheckInEventId: undefined,
+    googleCheckInEventIds: undefined,
+    googleCheckInCalendarId: undefined,
+  };
+  await saveSettings(cleared);
+  await emit("google-calendar-disconnected", {}).catch(() => {});
+  return cleared;
+}
+
+async function handleGoogleAuthExpired(): Promise<AddToCalendarResult> {
+  const settings = await loadSettings();
+  await clearGoogleConnectionState(settings);
+  return { outcome: "auth_disconnected", error: GOOGLE_DISCONNECTED_MESSAGE };
+}
+
+async function calendarFailureMaybeDisconnect(error: unknown): Promise<AddToCalendarResult> {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (isGoogleAuthExpiredError(msg)) {
+    return handleGoogleAuthExpired();
+  }
+  return { outcome: "failed", error: msg };
+}
+
 export async function disconnectGoogleCalendar(): Promise<void> {
   let settings = await loadSettings();
   if (settings.googleTokens?.refreshToken) {
@@ -252,22 +309,25 @@ export async function disconnectGoogleCalendar(): Promise<void> {
       /* best-effort */
     }
   }
-  settings = await deleteCheckInEvent(settings);
-  await saveSettings({
-    ...settings,
-    googleEmail: undefined,
-    googleTokens: undefined,
-  });
+  try {
+    settings = await deleteCheckInEvent(settings);
+  } catch {
+    settings = await loadSettings();
+  }
+  await clearGoogleConnectionState(settings);
 }
 
 export type AddToCalendarOutcome =
   | "created"
+  | "updated"
   | "opened"
   | "no_due"
   | "not_connected"
   | "failed"
   | "cancelled"
-  | "bad_due";
+  | "bad_due"
+  | "cleared"
+  | "auth_disconnected";
 
 export interface AddToCalendarResult {
   outcome: AddToCalendarOutcome;
@@ -278,10 +338,16 @@ export function messageForCalendarOutcome(result: AddToCalendarResult): string {
   switch (result.outcome) {
     case "created":
       return "Added to Google Calendar";
+    case "updated":
+      return "Due time saved";
+    case "auth_disconnected":
+      return result.error ?? GOOGLE_DISCONNECTED_MESSAGE;
+    case "cleared":
+      return "Due time cleared (calendar reminder removed)";
     case "opened":
       return "Opened Google Calendar (connect in Settings for one-click add)";
     case "no_due":
-      return "No due time found — try “buy milk at 6 PM” or “tomorrow”";
+      return "No due time found — try “buy milk at 6 PM” or “tomorrow 7:30 PM”";
     case "bad_due":
       return "Couldn't understand that time — try “tomorrow 6 PM” or “Friday 3 PM”";
     case "cancelled":
@@ -293,7 +359,37 @@ export function messageForCalendarOutcome(result: AddToCalendarResult): string {
   }
 }
 
-/** Prompt for a due time when missing, then add to Google Calendar. */
+export type DueTimePrompt = (opts: {
+  hasDue: boolean;
+  currentDueLabel: string | null;
+}) => Promise<string | null>;
+
+/** Set or change a thought's due time; syncs to Google Calendar when connected. */
+export async function scheduleThoughtDueTime(
+  thought: Thought,
+  ask: DueTimePrompt,
+): Promise<AddToCalendarResult> {
+  const currentDueLabel = thought.due_at ? formatDueDisplay(thought.due_at) : null;
+  const when = await ask({ hasDue: Boolean(thought.due_at), currentDueLabel });
+  if (when == null) return { outcome: "cancelled" };
+
+  if (thought.due_at) {
+    return updateThoughtDueTime(thought, when);
+  }
+
+  if (!when.trim()) return { outcome: "cancelled" };
+  const due = parseDueInput(when);
+  if (!due) return { outcome: "bad_due" };
+  await setDueAt(thought.id, due);
+  const updated = { ...thought, due_at: due };
+
+  if (await isGoogleCalendarConnected()) {
+    return addThoughtToGoogleCalendar(updated);
+  }
+  return { outcome: "updated" };
+}
+
+/** @deprecated use scheduleThoughtDueTime */
 export async function addThoughtToGoogleCalendarWithDue(
   thought: Thought,
   askDue: () => Promise<string | null>,
@@ -312,8 +408,55 @@ export async function addThoughtToGoogleCalendarWithDue(
   return addThoughtToGoogleCalendar(t);
 }
 
-/** Create event via Calendar API. Returns updated tokens on success. */
-async function createEventViaApi(thought: Thought): Promise<GoogleTokens> {
+async function deleteThoughtCalendarEvent(thought: Thought): Promise<void> {
+  const eventId = thought.calendar_event_id;
+  if (!eventId) return;
+  const settings = await loadSettings();
+  if (!settings.googleTokens?.refreshToken) {
+    await setCalendarEventId(thought.id, null);
+    return;
+  }
+  try {
+    const result = await invoke<DeleteEventResult>("google_calendar_delete_event", {
+      params: {
+        clientId: GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
+        tokens: settings.googleTokens,
+        eventId,
+        calendarId: null,
+      },
+    });
+    await saveSettings({ ...settings, googleTokens: result.tokens });
+  } catch {
+    /* best-effort — still clear local id */
+  }
+  await setCalendarEventId(thought.id, null);
+}
+
+/** Remove the Google Calendar event linked to a thought (best-effort). */
+export async function removeThoughtCalendarEvent(thought: Thought): Promise<void> {
+  await deleteThoughtCalendarEvent(thought);
+}
+
+/** Delete a thought and its calendar event. */
+export async function deleteThoughtWithCalendar(thought: Thought): Promise<void> {
+  await deleteThoughtCalendarEvent(thought);
+  await deleteThought(thought.id);
+}
+
+/** Wipe all thoughts after removing linked calendar events. */
+export async function wipeAllThoughtsWithCalendar(): Promise<void> {
+  const withEvents = await listWithCalendarEvents();
+  for (const t of withEvents) {
+    await deleteThoughtCalendarEvent(t);
+  }
+  await wipeAll();
+}
+
+/** Create event via Calendar API. Returns updated tokens + event id on success. */
+async function createEventViaApi(
+  thought: Thought,
+): Promise<{ tokens: GoogleTokens; eventId: string | null }> {
   const payload = eventPayloadForThought(thought);
   if (!payload) throw new Error("No due time on this thought");
 
@@ -336,7 +479,11 @@ async function createEventViaApi(thought: Thought): Promise<GoogleTokens> {
     ...settings,
     googleTokens: result.tokens,
   });
-  return result.tokens;
+  const eventId = result.eventId ?? null;
+  if (eventId) {
+    await setCalendarEventId(thought.id, eventId);
+  }
+  return { tokens: result.tokens, eventId };
 }
 
 export async function addThoughtToGoogleCalendar(
@@ -349,11 +496,15 @@ export async function addThoughtToGoogleCalendar(
 
   if (connected) {
     try {
+      // Replace any previous event for this thought (avoid duplicates).
+      if (thought.calendar_event_id) {
+        await deleteThoughtCalendarEvent(thought);
+        thought = { ...thought, calendar_event_id: null };
+      }
       await createEventViaApi(thought);
       return { outcome: "created" };
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      return { outcome: "failed", error };
+      return calendarFailureMaybeDisconnect(e);
     }
   }
 
@@ -369,14 +520,65 @@ export async function addThoughtToGoogleCalendar(
 
 export async function autoAddThoughtToGoogleCalendarIfConnected(
   thought: Thought,
-): Promise<void> {
+): Promise<AddToCalendarResult | void> {
   if (!thought.due_at) return;
   const connected = await isGoogleCalendarConnected();
   if (!connected) return;
   try {
+    if (thought.calendar_event_id) {
+      await deleteThoughtCalendarEvent(thought);
+      thought = { ...thought, calendar_event_id: null };
+    }
     await createEventViaApi(thought);
-  } catch {
-    /* non-blocking */
+    return { outcome: "created" };
+  } catch (e) {
+    return calendarFailureMaybeDisconnect(e);
+  }
+}
+
+/**
+ * Change a thought's due time. If it already has a Google Calendar reminder,
+ * removes the old event and creates a new one at the updated time.
+ * Pass null/empty to clear the due time (and remove the calendar reminder).
+ */
+export async function updateThoughtDueTime(
+  thought: Thought,
+  dueInput: string | null,
+): Promise<AddToCalendarResult> {
+  const trimmed = dueInput?.trim() ?? "";
+  const hadCalendarEvent = Boolean(thought.calendar_event_id);
+
+  if (!trimmed) {
+    await setDueAt(thought.id, null);
+    if (hadCalendarEvent) {
+      await deleteThoughtCalendarEvent(thought);
+    }
+    return { outcome: "cleared" };
+  }
+
+  const due = parseDueInput(trimmed);
+  if (!due) return { outcome: "bad_due" };
+
+  await setDueAt(thought.id, due);
+  let updated: Thought = { ...thought, due_at: due };
+
+  if (!hadCalendarEvent) {
+    return { outcome: "updated" };
+  }
+
+  const connected = await isGoogleCalendarConnected();
+  if (!connected) {
+    await setCalendarEventId(thought.id, null);
+    return { outcome: "updated" };
+  }
+
+  try {
+    await deleteThoughtCalendarEvent(thought);
+    updated = { ...updated, calendar_event_id: null };
+    await createEventViaApi(updated);
+    return { outcome: "updated" };
+  } catch (e) {
+    return calendarFailureMaybeDisconnect(e);
   }
 }
 
@@ -393,6 +595,10 @@ export async function applyGoogleCalendarSettings(
       return { settings: cleared, message: "Calendar check-in reminders removed" };
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
+      if (isGoogleAuthExpiredError(error)) {
+        const cleared = await clearGoogleConnectionState(s);
+        return { settings: cleared, error: GOOGLE_DISCONNECTED_MESSAGE };
+      }
       return { settings: s, error };
     }
   }
@@ -410,6 +616,10 @@ export async function applyGoogleCalendarSettings(
     };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
+    if (isGoogleAuthExpiredError(error)) {
+      const cleared = await clearGoogleConnectionState(s);
+      return { settings: cleared, error: GOOGLE_DISCONNECTED_MESSAGE };
+    }
     return { settings: s, error: `Calendar check-in sync failed: ${error}` };
   }
 }

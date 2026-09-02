@@ -17,13 +17,8 @@ const FILLER_WORDS = [
   "erm",
   "uhh",
   "umm",
-  "like",
   "you know",
   "i mean",
-  "basically",
-  "literally",
-  "sort of",
-  "kind of",
 ];
 
 // Phrases that signal "ignore what I just said, here's the correction".
@@ -63,12 +58,9 @@ export function tier0Cleanup(raw: string, faithful: boolean): CleanupResult {
   t = t.replace(/\s{2,}/g, " ").trim();
   t = t.replace(/^[,.;:\s]+/, "").trim();
 
-  // 5) Capitalize first letter; add a period if it reads like a sentence.
+  // 5) Capitalize first letter only — do not auto-add punctuation (hurts short commands).
   if (t.length > 0) {
     t = t[0].toUpperCase() + t.slice(1);
-    if (!/[.!?]$/.test(t) && t.split(/\s+/).length > 2) {
-      t += ".";
-    }
   }
 
   if (t.length === 0) t = original.trim();
@@ -77,14 +69,16 @@ export function tier0Cleanup(raw: string, faithful: boolean): CleanupResult {
 
 function resolveCorrections(text: string): string {
   let t = text;
+  const trimmedLen = t.trim().length;
   for (const marker of CORRECTION_MARKERS) {
-    const re = new RegExp(`.*\\b${escapeRegExp(marker)}\\b[\\s,:-]*`, "i");
-    if (re.test(t)) {
-      // Only treat as a correction if there is meaningful content after it.
-      const after = t.replace(re, "").trim();
-      if (after.split(/\s+/).length >= 1 && after.length >= 2) {
-        t = " " + after + " ";
-      }
+    const re = new RegExp(`\\b${escapeRegExp(marker)}\\b[\\s,:-]*`, "i");
+    const match = re.exec(t);
+    if (!match || match.index === undefined) continue;
+    // Only treat as a correction when the marker is past the first third of the utterance.
+    if (match.index < trimmedLen * 0.33) continue;
+    const after = t.slice(match.index + match[0].length).trim();
+    if (after.split(/\s+/).length >= 1 && after.length >= 2) {
+      t = " " + after + " ";
     }
   }
   return t;

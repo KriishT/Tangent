@@ -2,6 +2,14 @@ import { getSettingRaw, setSettingRaw } from "./db";
 
 export const DEFAULT_HOTKEY = "CommandOrControl+Shift+Space";
 
+export type ThemeMode = "light" | "dark" | "system";
+
+export const THEME_MODE_LABELS: Record<ThemeMode, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "Match system",
+};
+
 export type GoogleCalendarPhoneMode = "off" | "picked_times" | "interval";
 
 export const GOOGLE_CALENDAR_PHONE_LABELS: Record<GoogleCalendarPhoneMode, string> = {
@@ -35,6 +43,7 @@ export const WHISPER_MODEL_CANDIDATES = [
 ] as const;
 
 export interface AppSettings {
+  theme: ThemeMode;
   hotkey: string;
   voiceEnabled: boolean;
   modelPath: string;
@@ -84,6 +93,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  theme: "system",
   hotkey: DEFAULT_HOTKEY,
   voiceEnabled: true,
   modelPath: DEFAULT_MODEL_PATH,
@@ -118,6 +128,7 @@ export async function loadSettings(): Promise<AppSettings> {
       merged.voiceEnabled = DEFAULT_SETTINGS.voiceEnabled;
     }
     if (!merged.nudgeInterval) merged.nudgeInterval = DEFAULT_SETTINGS.nudgeInterval;
+    if (!merged.theme) merged.theme = DEFAULT_SETTINGS.theme;
     if (merged.nudgeCustomHours === undefined || merged.nudgeCustomHours < 0) {
       merged.nudgeCustomHours = DEFAULT_SETTINGS.nudgeCustomHours;
     }
@@ -301,7 +312,7 @@ export function phoneCheckInTimes(s: AppSettings): string[] {
   const mode = s.googleCalendarPhoneMode ?? "off";
   if (mode === "off") return [];
   if (mode === "interval") return intervalCheckInTimes(s);
-  return chosenCheckInTimes(s);
+  return activeCheckInTimes(s);
 }
 
 /** Check-in times excluding quiet hours, sorted. */

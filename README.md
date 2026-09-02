@@ -2,7 +2,7 @@
 
 Catch every stray thought without leaving what you're doing - then sort it out later, by priority.
 
-Tangent is a lightweight, local-first desktop app (Tauri v2 + React/TypeScript). A global hotkey pops a capture bar over whatever you're doing; you type or speak one line; it's saved with the context of what you were working on (active app + window/file), and you triage it later. See the product docs in [../docs](../docs).
+Tangent is a lightweight, local-first desktop app (Tauri v2 + React/TypeScript) for **Windows and macOS**. A global hotkey pops a capture bar over whatever you're doing; you type or speak one line; it's saved with the context of what you were working on (active app + window/file), and you triage it later. See the product docs in [../docs](../docs).
 
 ## Status
 

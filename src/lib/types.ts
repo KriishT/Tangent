@@ -20,6 +20,8 @@ export interface Thought {
   ctx_extra: string | null;
   bucket: Bucket | null;
   due_at: string | null;
+  /** Google Calendar event id when this thought was added to Calendar. */
+  calendar_event_id: string | null;
   priority: number | null;
   resurface_at: string | null;
   notified_at: string | null;

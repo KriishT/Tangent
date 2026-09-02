@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { Bucket, Thought } from "../lib/types";
 import { BUCKET_LABELS } from "../lib/types";
@@ -6,16 +6,19 @@ import { useDialog } from "../components/DialogProvider";
 import ThoughtContextPanel from "../components/ThoughtContextPanel";
 import {
   completeThought,
-  deleteThought,
   listByBucket,
   listCompleted,
   moveToBoardColumn,
   reopenThought,
-  setDueAt,
+  updateBody,
 } from "../lib/db";
+import { dueClassName } from "../lib/parse";
 import {
-  addThoughtToGoogleCalendarWithDue,
+  scheduleThoughtDueTime,
   messageForCalendarOutcome,
+  deleteThoughtWithCalendar,
+  removeThoughtCalendarEvent,
+  addThoughtToGoogleCalendar,
 } from "../lib/googleCalendar";
 
 const ACTIVE: Bucket[] = ["do_now", "do_soon", "later", "idea"];
@@ -45,10 +48,12 @@ export default function Lists() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [overDrop, setOverDrop] = useState<DropTarget | null>(null);
   const [toast, setToast] = useState("");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flash = (msg: string) => {
+  const flash = (msg: string, ms = 2200) => {
     setToast(msg);
-    setTimeout(() => setToast(""), 1800);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), ms);
   };
 
   const reload = useCallback(async () => {
@@ -70,12 +75,18 @@ export default function Lists() {
   }, [reload]);
 
   const dropOn = async (id: number, target: DropTarget) => {
+    const all = [...ACTIVE.flatMap((b) => cols[b] ?? []), ...done];
+    const t = all.find((x) => x.id === id);
+    if (t && target === "done") {
+      await removeThoughtCalendarEvent(t);
+    }
     await moveToBoardColumn(id, target);
     await reload();
   };
 
-  const finish = async (id: number) => {
-    await completeThought(id);
+  const finish = async (t: Thought) => {
+    await removeThoughtCalendarEvent(t);
+    await completeThought(t.id);
     await reload();
   };
   const reopen = async (id: number) => {
@@ -91,7 +102,19 @@ export default function Lists() {
       variant: "danger",
     });
     if (ok) {
-      await deleteThought(t.id);
+      await deleteThoughtWithCalendar(t);
+      await reload();
+    }
+  };
+
+  const edit = async (t: Thought) => {
+    const next = await prompt({
+      title: "Edit thought",
+      defaultValue: t.body,
+      confirmLabel: "Save",
+    });
+    if (next != null && next.trim() && next !== t.body) {
+      await updateBody(t.id, next.trim());
       await reload();
     }
   };
@@ -105,21 +128,73 @@ export default function Lists() {
     }
   };
 
-  const calendar = async (t: Thought) => {
-    const result = await addThoughtToGoogleCalendarWithDue(
-      t,
-      () =>
-        prompt({
-          title: "Add to Google Calendar",
-          message:
-            "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, June 26 2 PM, Jun 26 7:30 PM",
-          confirmLabel: "Add to Calendar",
-        }),
-      setDueAt
+  const manageDueTime = async (t: Thought) => {
+    const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
+      prompt({
+        title: hasDue ? "Change due time" : "Set due time",
+        message: hasDue
+          ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
+          : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
+        defaultValue: "",
+        confirmLabel: hasDue ? "Update" : "Set due time",
+        allowEmpty: hasDue,
+      }),
     );
     if (result.outcome === "cancelled") return;
-    flash(messageForCalendarOutcome(result));
-    if (result.outcome === "created" || result.outcome === "opened") {
+    const msg = messageForCalendarOutcome(result);
+    if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+    if (
+      result.outcome === "created" ||
+      result.outcome === "opened" ||
+      result.outcome === "updated" ||
+      result.outcome === "cleared" ||
+      result.outcome === "auth_disconnected" ||
+      result.outcome === "bad_due" ||
+      result.outcome === "failed"
+    ) {
+      await reload();
+    }
+  };
+
+  const addToGoogleCalendar = async (t: Thought) => {
+    if (!t.due_at) {
+      const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
+        prompt({
+          title: "Add to Google Calendar",
+          message: hasDue
+            ? `Current: ${currentDueLabel}\n\nWhen should this appear on your calendar?\nLeave blank to clear.`
+            : "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
+          defaultValue: "",
+          confirmLabel: "Add to calendar",
+          allowEmpty: hasDue,
+        }),
+      );
+      if (result.outcome === "cancelled") return;
+      const msg = messageForCalendarOutcome(result);
+      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+      if (
+        result.outcome === "created" ||
+        result.outcome === "opened" ||
+        result.outcome === "updated" ||
+        result.outcome === "cleared" ||
+        result.outcome === "auth_disconnected" ||
+        result.outcome === "bad_due" ||
+        result.outcome === "failed"
+      ) {
+        await reload();
+      }
+      return;
+    }
+
+    const result = await addThoughtToGoogleCalendar(t);
+    const msg = messageForCalendarOutcome(result);
+    if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+    if (
+      result.outcome === "created" ||
+      result.outcome === "opened" ||
+      result.outcome === "auth_disconnected" ||
+      result.outcome === "failed"
+    ) {
       await reload();
     }
   };
@@ -158,52 +233,88 @@ export default function Lists() {
       onDragEnd={onDragEnd}
     >
       <div className="card-body">{t.body}</div>
-      {!fromDone && (
-        <>
-          <div className="card-meta">
-            {t.due_at && (
-              <span className="due">due {new Date(t.due_at).toLocaleDateString()}</span>
-            )}
-            {t.ctx_detail && (
-              <span title={t.ctx_title ?? undefined}>
-                {t.ctx_app ? `${t.ctx_app} · ` : ""}
-                {t.ctx_detail}
-              </span>
-            )}
-            {t.source === "voice" && <span className="tag-voice">voice</span>}
-          </div>
-          {(t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
-        </>
-      )}
+      <div className="card-meta">
+        {fromDone && (
+          <span className="tag-status">{t.bucket === "dropped" ? "Dropped" : "Done"}</span>
+        )}
+        {!fromDone && t.due_at && (
+          <span className={dueClassName(t.due_at)}>
+            due{" "}
+            {new Date(t.due_at).toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
+        )}
+        {!fromDone && t.ctx_detail && (
+          <span title={t.ctx_title ?? undefined}>
+            {t.ctx_app ? `${t.ctx_app} · ` : ""}
+            {t.ctx_detail}
+          </span>
+        )}
+        {!fromDone && t.source === "voice" && <span className="tag-voice">voice</span>}
+        {t.calendar_event_id && <span className="tag-calendar">Google Calendar</span>}
+      </div>
+      {!fromDone && (t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
       <div className="card-actions">
         {!fromDone &&
           ACTIVE.filter((x) => x !== t.bucket).map((x) => (
-            <button key={x} title={`Move to ${BUCKET_LABELS[x]}`} onClick={() => dropOn(t.id, x)}>
+            <button
+              key={x}
+              type="button"
+              title={`Move to ${BUCKET_LABELS[x]}`}
+              onClick={() => void dropOn(t.id, x)}
+            >
               {COLUMN_META[x].label}
             </button>
           ))}
         {fromDone ? (
-          <button onClick={() => reopen(t.id)}>↺ Reopen</button>
+          <button type="button" onClick={() => void reopen(t.id)}>
+            Reopen
+          </button>
         ) : (
-          <button className="ok" title="Mark done" onClick={() => finish(t.id)}>
-            ✓ Done
+          <button type="button" className="ok" title="Mark done" onClick={() => void finish(t)}>
+            Done
           </button>
         )}
         {!fromDone && (
-          <button
-            title={
-              t.due_at ? "Add to Google Calendar" : "Pick a time and add to Google Calendar"
-            }
-            onClick={() => void calendar(t)}
-          >
-            Calendar
-          </button>
+          <>
+            <button
+              type="button"
+              title={
+                t.due_at
+                  ? "Change due time (also updates Google Calendar when connected)"
+                  : "Set a due time (adds to Google Calendar when connected)"
+              }
+              onClick={() => void manageDueTime(t)}
+            >
+              {t.due_at ? "Change due" : "Set due"}
+            </button>
+            <button
+              type="button"
+              title={
+                t.calendar_event_id
+                  ? "Synced to Google Calendar — click to update"
+                  : t.due_at
+                    ? "Add or update on Google Calendar"
+                    : "Set a time and add to Google Calendar"
+              }
+              onClick={() => void addToGoogleCalendar(t)}
+            >
+              Google Calendar
+            </button>
+            <button type="button" title="Edit" onClick={() => void edit(t)}>
+              Edit
+            </button>
+          </>
         )}
-        <button title="Copy" onClick={() => void copy(t)}>
+        <button type="button" title="Copy" onClick={() => void copy(t)}>
           Copy
         </button>
-        <button className="del" title="Delete" onClick={() => remove(t)}>
-          🗑
+        <button type="button" className="del" title="Delete" onClick={() => void remove(t)}>
+          Delete
         </button>
       </div>
     </div>
@@ -215,7 +326,8 @@ export default function Lists() {
     <div>
       <div className="page-title">Priority board</div>
       <div className="page-sub">
-        {total} active · {done.length} done — drag cards between columns.
+        {total} active · {done.length} done — drag cards between columns. Drop from Triage lands
+        here as Dropped.
       </div>
 
       <div className="board">
@@ -280,7 +392,11 @@ export default function Lists() {
           </div>
         </div>
       </div>
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

@@ -56,11 +56,12 @@ export default function HotkeyCapture({ value, onChange }: Props) {
       e.stopPropagation();
 
       if (e.key === "Escape") {
-        if (pending) {
-          confirmListening();
-        } else {
-          cancelListening();
-        }
+        cancelListening();
+        return;
+      }
+
+      if (e.key === "Enter") {
+        if (pending) confirmListening();
         return;
       }
 
@@ -100,7 +101,7 @@ export default function HotkeyCapture({ value, onChange }: Props) {
           pending ? (
             <span className="hotkey-capture-pending">
               <span className="hotkey-capture-value">{formatHotkeyDisplay(pending)}</span>
-              <span className="hotkey-capture-hint">Press Esc to confirm</span>
+              <span className="hotkey-capture-hint">Enter to confirm · Esc to cancel</span>
             </span>
           ) : (
             <span className="hotkey-capture-prompt">Press your shortcut…</span>
@@ -110,9 +111,9 @@ export default function HotkeyCapture({ value, onChange }: Props) {
         )}
       </button>
       <div className="desc">
-        Click, press a shortcut (e.g. Shift+D), then Esc to confirm. Needs a modifier — not a
+        Click, press a shortcut (e.g. Shift+D), then Enter to confirm. Needs a modifier — not a
         single key. {isMac ? "Cmd+C" : "Ctrl+C"}, Alt+Tab, and similar system shortcuts are
-        blocked.
+        blocked. Esc cancels.
       </div>
       {error && <div className="hotkey-capture-error">{error}</div>}
     </div>

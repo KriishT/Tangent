@@ -24,6 +24,8 @@ interface PromptOptions {
   defaultValue?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Allow confirming with an empty value (e.g. clear due time). */
+  allowEmpty?: boolean;
 }
 
 type DialogState =
@@ -99,6 +101,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const isDanger = dialog?.kind === "confirm" && dialog.options.variant === "danger";
 
+  function submitPrompt() {
+    if (!dialog || dialog.kind !== "prompt") return;
+    const v = promptValue.trim();
+    if (v || dialog.options.allowEmpty) {
+      close(v);
+    }
+  }
+
   return (
     <DialogContext.Provider value={{ confirm, prompt }}>
       {children}
@@ -130,8 +140,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    const v = promptValue.trim();
-                    if (v) close(v);
+                    submitPrompt();
                   }
                 }}
               />
@@ -151,8 +160,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                   if (dialog.kind === "confirm") {
                     close(true);
                   } else {
-                    const v = promptValue.trim();
-                    if (v) close(v);
+                    submitPrompt();
                   }
                 }}
               >
