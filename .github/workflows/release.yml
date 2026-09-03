@@ -1,7 +1,8 @@
 # Build unsigned Windows + Mac installers on each version tag.
 # Creates a DRAFT GitHub Release — add SHA-256 hashes, then click Publish.
 #
-# Required secret (optional): GOOGLE_OAUTH_CLIENT_ID
+# Optional secrets (Google Calendar in release builds):
+#   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET
 
 name: Release
 
@@ -62,6 +63,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          VITE_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Tangent ${{ github.ref_name }}

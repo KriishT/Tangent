@@ -27,13 +27,12 @@ git push -u origin main
 
 Copy `.env.example` → `.env` and set your OAuth client ID for local builds.
 
-For GitHub Actions, add a repository **secret**:
+For GitHub Actions, add repository **secrets** (Settings → Secrets and variables → Actions):
 
-- Settings → Secrets and variables → Actions → **New repository secret**
-- Name: `GOOGLE_OAUTH_CLIENT_ID`
-- Value: your `*.apps.googleusercontent.com` client ID
+- `GOOGLE_OAUTH_CLIENT_ID` — your `*.apps.googleusercontent.com` client ID
+- `GOOGLE_OAUTH_CLIENT_SECRET` — required for Web-application OAuth clients (same as local `.env`)
 
-Without this, the app still works — only **Connect Google Calendar** is disabled.
+Without these, the app still works — only **Connect Google Calendar** is disabled.
 
 ### 3. Icons
 
