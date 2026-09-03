@@ -82,7 +82,18 @@ Output:
 src-tauri/target/release/bundle/dmg/Tangent_0.1.0_aarch64.dmg
 ```
 
-First open: **right-click Tangent → Open** (not double-click).
+First install (unsigned — Gatekeeper will warn):
+
+1. Open the `.dmg`.
+2. Drag **Tangent** into **Applications**.
+3. **Eject the disk image** (do not launch from the DMG).
+4. In Applications: **right-click Tangent → Open → Open**.
+
+If macOS says the app is “damaged,” clear the quarantine flag, then open again:
+
+```bash
+xattr -cr /Applications/Tangent.app
+```
 
 ---
 
@@ -133,6 +144,23 @@ Voice is included — no extra downloads. Turn on **Voice capture** in Settings.
 
 ---
 
+## Install (Mac)
+
+1. Download the `.dmg` below and open it.
+2. Drag **Tangent** into **Applications**.
+3. **Eject the disk image** — do not run the app from the DMG.
+4. In Applications: right-click **Tangent** → **Open** → **Open**.
+
+If macOS says the app is “damaged,” that is Gatekeeper on an unsigned build (not a corrupt download). Run:
+
+```bash
+xattr -cr /Applications/Tangent.app
+```
+
+Then open Tangent again from Applications.
+
+---
+
 <details>
 <summary>Optional: verify download (for the curious)</summary>
 
@@ -177,4 +205,4 @@ Explain briefly:
 | Voice build fails on Windows | Install Visual Studio **Desktop development with C++** + [CMake](https://cmake.org/download/) |
 | Voice build fails on Mac | `xcode-select --install` and `brew install cmake` |
 | SmartScreen every time | Expected until cert + reputation |
-| Mac “damaged” / won’t open | Right-click → Open; or `xattr -cr /Applications/Tangent.app` |
+| Mac “damaged” / won’t open | App must live in Applications with the DMG ejected. Then right-click → Open, or `xattr -cr /Applications/Tangent.app` |
