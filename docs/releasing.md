@@ -82,17 +82,23 @@ Output:
 src-tauri/target/release/bundle/dmg/Tangent_0.1.0_aarch64.dmg
 ```
 
-First install (unsigned — Gatekeeper will warn):
+First install (ad-hoc signed — no Apple Developer ID yet):
 
 1. Open the `.dmg`.
 2. Drag **Tangent** into **Applications**.
 3. **Eject the disk image** (do not launch from the DMG).
-4. In Applications: **right-click Tangent → Open → Open**.
+4. Open Tangent. If macOS blocks it: **System Settings → Privacy & Security → Open Anyway**,
+   or right-click → **Open**.
 
-If macOS says the app is “damaged,” clear the quarantine flag, then open again:
+`signingIdentity: "-"` seals the `.app` so Apple Silicon / Sequoia do not show the false
+“damaged and can’t be opened” dialog (that happens with an incomplete signature).
+
+Fallback if an older build still says “damaged”:
 
 ```bash
 xattr -cr /Applications/Tangent.app
+codesign --force --deep --sign - /Applications/Tangent.app
+open /Applications/Tangent.app
 ```
 
 ---
@@ -149,15 +155,15 @@ Voice is included — no extra downloads. Turn on **Voice capture** in Settings.
 1. Download the `.dmg` below and open it.
 2. Drag **Tangent** into **Applications**.
 3. **Eject the disk image** — do not run the app from the DMG.
-4. In Applications: right-click **Tangent** → **Open** → **Open**.
+4. Open Tangent. If blocked: System Settings → Privacy & Security → **Open Anyway**.
 
-If macOS says the app is “damaged,” that is Gatekeeper on an unsigned build (not a corrupt download). Run:
+Older builds may show a false “damaged” dialog on Apple Silicon. Repair with:
 
 ```bash
 xattr -cr /Applications/Tangent.app
+codesign --force --deep --sign - /Applications/Tangent.app
+open /Applications/Tangent.app
 ```
-
-Then open Tangent again from Applications.
 
 ---
 
@@ -205,4 +211,4 @@ Explain briefly:
 | Voice build fails on Windows | Install Visual Studio **Desktop development with C++** + [CMake](https://cmake.org/download/) |
 | Voice build fails on Mac | `xcode-select --install` and `brew install cmake` |
 | SmartScreen every time | Expected until cert + reputation |
-| Mac “damaged” / won’t open | App must live in Applications with the DMG ejected. Then right-click → Open, or `xattr -cr /Applications/Tangent.app` |
+| Mac “damaged” / won’t open | Incomplete signature. Use a build with `signingIdentity: "-"`, or repair: `xattr -cr /Applications/Tangent.app && codesign --force --deep --sign - /Applications/Tangent.app` |

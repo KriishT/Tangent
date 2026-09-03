@@ -73,8 +73,8 @@ jobs:
             **Windows:** SmartScreen may warn → More info → Run anyway.
 
             **Mac:** Open the `.dmg` → drag Tangent to Applications → **eject the disk image**.
-            Do not run the app from the DMG. First launch: right-click → Open → Open.
-            If macOS says it is “damaged,” run: `xattr -cr /Applications/Tangent.app` then open again.
+            Then open System Settings → Privacy & Security → **Open Anyway**, or right-click → Open.
+            (Build is ad-hoc signed so Gatekeeper should not show the false “damaged” dialog.)
 
             Add SHA-256 checksums here before publishing the draft.
           releaseDraft: true
