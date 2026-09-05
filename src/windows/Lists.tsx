@@ -30,9 +30,11 @@ const COLUMN_META: Record<string, { label: string; accent: string }> = {
   done: { label: "Done", accent: "var(--c-done)" },
 };
 
+const DRAG_THRESHOLD_PX = 6;
+
 type DropTarget = Bucket | "done";
 
-function parseDropTarget(el: HTMLElement | null): DropTarget | null {
+function parseDropTarget(el: Element | null): DropTarget | null {
   const col = el?.closest("[data-drop]") as HTMLElement | null;
   const v = col?.dataset.drop;
   if (!v) return null;
@@ -49,6 +51,13 @@ export default function Lists() {
   const [overDrop, setOverDrop] = useState<DropTarget | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragRef = useRef<{
+    id: number;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
 
   const flash = (msg: string, ms = 2200) => {
     setToast(msg);
@@ -66,8 +75,14 @@ export default function Lists() {
 
   useEffect(() => {
     void reload();
-    const un = listen("thought-added", () => void reload());
-    const t = setInterval(() => void reload(), 5000);
+    const un = listen("thought-added", () => {
+      if (dragRef.current) return;
+      void reload();
+    });
+    const t = setInterval(() => {
+      if (dragRef.current) return;
+      void reload();
+    }, 5000);
     return () => {
       un.then((f) => f());
       clearInterval(t);
@@ -199,38 +214,78 @@ export default function Lists() {
     }
   };
 
-  const onDragStart = (e: React.DragEvent, id: number) => {
-    setDraggingId(id);
-    e.dataTransfer.setData("text/plain", String(id));
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const onDragEnd = () => {
+  const endDrag = () => {
+    dragRef.current = null;
     setDraggingId(null);
     setOverDrop(null);
   };
 
-  const onDragOverCol = (e: React.DragEvent, target: DropTarget) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setOverDrop(target);
+  const onCardPointerDown = (e: React.PointerEvent<HTMLDivElement>, id: number) => {
+    if (e.button !== 0) return;
+    const hit = e.target as HTMLElement;
+    if (hit.closest("button, a, input, textarea, .card-actions")) return;
+
+    dragRef.current = {
+      id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  const onDropCol = async (e: React.DragEvent, target: DropTarget) => {
-    e.preventDefault();
-    const id = Number(e.dataTransfer.getData("text/plain")) || draggingId;
-    setOverDrop(null);
-    setDraggingId(null);
-    if (id) await dropOn(id, target);
+  const onCardPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.active) {
+      if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+      drag.active = true;
+      setDraggingId(drag.id);
+    }
+
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    setOverDrop(parseDropTarget(under));
+  };
+
+  const onCardPointerUp = async (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+
+    const id = drag.id;
+    const wasDragging = drag.active;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const target = parseDropTarget(under);
+    endDrag();
+
+    if (wasDragging && target) {
+      await dropOn(id, target);
+    }
+  };
+
+  const onCardPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    endDrag();
   };
 
   const renderCard = (t: Thought, fromDone = false) => (
     <div
       className={`card${draggingId === t.id ? " dragging" : ""}`}
       key={t.id}
-      draggable
-      onDragStart={(e) => onDragStart(e, t.id)}
-      onDragEnd={onDragEnd}
+      onPointerDown={(e) => onCardPointerDown(e, t.id)}
+      onPointerMove={onCardPointerMove}
+      onPointerUp={(e) => void onCardPointerUp(e)}
+      onPointerCancel={onCardPointerCancel}
     >
       <div className="card-body">{t.body}</div>
       <div className="card-meta">
@@ -346,13 +401,6 @@ export default function Lists() {
             <div
               className={`board-col-body${overDrop === b ? " drag-over" : ""}`}
               data-drop={b}
-              onDragOver={(e) => onDragOverCol(e, b)}
-              onDragLeave={(e) => {
-                if (parseDropTarget(e.relatedTarget as HTMLElement) !== b) {
-                  setOverDrop((cur) => (cur === b ? null : cur));
-                }
-              }}
-              onDrop={(e) => void onDropCol(e, b)}
             >
               {(cols[b] ?? []).length === 0 ? (
                 <div className="board-empty">Drop here</div>
@@ -376,13 +424,6 @@ export default function Lists() {
           <div
             className={`board-col-body${overDrop === "done" ? " drag-over" : ""}`}
             data-drop="done"
-            onDragOver={(e) => onDragOverCol(e, "done")}
-            onDragLeave={(e) => {
-              if (parseDropTarget(e.relatedTarget as HTMLElement) !== "done") {
-                setOverDrop((cur) => (cur === "done" ? null : cur));
-              }
-            }}
-            onDrop={(e) => void onDropCol(e, "done")}
           >
             {done.length === 0 ? (
               <div className="board-empty">Drop here</div>

@@ -985,12 +985,15 @@ body.capture-window {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 88px;
+  touch-action: none;
 }
 .board-empty {
   color: var(--text-faint);
   text-align: center;
   font-size: 16px;
   padding: 16px 0;
+  pointer-events: none;
 }
 
 .card {
@@ -1000,13 +1003,17 @@ body.capture-window {
   border: 1px solid var(--stroke);
   transition: border-color var(--dur-fast) var(--ease);
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 .card:active {
   cursor: grabbing;
 }
 .card.dragging {
-  opacity: 0.45;
+  opacity: 0.4;
   box-shadow: var(--shadow-md);
+  /* Let drop targeting see the column under the pointer */
+  pointer-events: none;
 }
 .board-col-body.drag-over {
   outline: 2px dashed var(--col, var(--accent));
@@ -1074,6 +1081,7 @@ body.capture-window {
   opacity: 0;
   max-height: 0;
   overflow: hidden;
+  touch-action: auto;
   transition: opacity var(--dur) var(--ease), max-height var(--dur) var(--ease);
 }
 .card:hover .card-actions,

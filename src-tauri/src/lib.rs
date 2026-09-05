@@ -6,7 +6,6 @@ mod voice;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
-use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 /// Triggered by the global hotkey (registered from the frontend). Reads the
@@ -274,12 +273,6 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
-
-            // Enable launch-on-startup by default (user can toggle off in Settings).
-            let autostart = app.autolaunch();
-            if !autostart.is_enabled().unwrap_or(true) {
-                let _ = autostart.enable();
-            }
 
             Ok(())
         })

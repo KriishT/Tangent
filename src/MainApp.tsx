@@ -10,6 +10,7 @@ import Lists from "./windows/Lists";
 import Settings from "./windows/Settings";
 import Stats from "./windows/Stats";
 import { applyHotkey } from "./lib/hotkey";
+import { ensureDefaultAutostart } from "./lib/autostart";
 import { preloadVoiceModel } from "./lib/voiceCapture";
 import { ensureNotifications, maybeTriageNudge, runResurfaceTick } from "./lib/resurface";
 import { loadSettings, saveSettings, type ThemeMode } from "./lib/settings";
@@ -48,6 +49,7 @@ export default function MainApp() {
         void sendNotification({ title: "Tangent — hotkey", body: err });
       }
     });
+    void ensureDefaultAutostart();
     void preloadVoiceModel();
 
     let timer: ReturnType<typeof setInterval> | undefined;
