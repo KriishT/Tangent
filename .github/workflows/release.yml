@@ -83,3 +83,18 @@ jobs:
           prerelease: false
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      # tauri-action sometimes uploads only the .dmg on macOS; updater needs .app.tar.gz + .sig.
+      - name: Upload macOS updater bundles
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          files=(src-tauri/target/release/bundle/macos/*.app.tar.gz src-tauri/target/release/bundle/macos/*.app.tar.gz.sig)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No macOS updater artifacts found"
+            exit 1
+          fi
+          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
