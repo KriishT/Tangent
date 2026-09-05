@@ -32,6 +32,8 @@ import {
 } from "../lib/googleCalendar";
 import { exportAll } from "../lib/db";
 import { emit, listen } from "@tauri-apps/api/event";
+import { checkForAppUpdate, installAppUpdate } from "../lib/updater";
+import { getVersion } from "@tauri-apps/api/app";
 
 function applyChosenTimesModes(prev: AppSettings, checkInTimes: string[]): AppSettings {
   const updated = { ...prev, checkInTimes };
@@ -72,12 +74,17 @@ export default function Settings({
   const [googleBusy, setGoogleBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [updateBusy, setUpdateBusy] = useState(false);
   const onMac = isMacPlatform();
 
   useEffect(() => {
     void loadSettings().then(setS);
     void isEnabled()
       .then(setAutostart)
+      .catch(() => {});
+    void getVersion()
+      .then(setAppVersion)
       .catch(() => {});
     const un = listen("google-calendar-disconnected", () => {
       void loadSettings().then(setS);
@@ -150,6 +157,35 @@ export default function Settings({
       setAutostart(next);
     } catch (e) {
       flash(e instanceof Error ? e.message : "Could not change startup setting");
+    }
+  }
+
+  async function onCheckForUpdates() {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      const result = await checkForAppUpdate();
+      if (result.status === "up_to_date") {
+        flash(appVersion ? `You're on the latest version (v${appVersion})` : "You're up to date");
+        return;
+      }
+      if (result.status === "error") {
+        flash(result.message);
+        return;
+      }
+      const ok = await confirm({
+        title: `Tangent ${result.update.version} is available`,
+        message: "Download and install now? The app will restart.",
+        confirmLabel: "Update now",
+        cancelLabel: "Later",
+      });
+      if (!ok) return;
+      flash("Downloading update…");
+      await installAppUpdate(result.update);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setUpdateBusy(false);
     }
   }
 
@@ -309,6 +345,26 @@ export default function Settings({
             checked={autostart}
             onChange={(e) => onToggleAutostart(e.target.checked)}
           />
+        </div>
+      </div>
+
+      <div className="setting">
+        <div className="row">
+          <div>
+            <label>App updates</label>
+            <div className="desc">
+              {appVersion ? `Current version v${appVersion}. ` : ""}
+              Check GitHub for a newer build and install it in-app.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn"
+            disabled={updateBusy}
+            onClick={() => void onCheckForUpdates()}
+          >
+            {updateBusy ? "Checking…" : "Check for updates"}
+          </button>
         </div>
       </div>
 

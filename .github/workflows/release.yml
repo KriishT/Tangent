@@ -1,8 +1,9 @@
-# Build unsigned Windows + Mac installers on each version tag.
-# Creates a DRAFT GitHub Release — add SHA-256 hashes, then click Publish.
+# Build Windows + Mac installers on each version tag (with updater signatures).
+# Creates a DRAFT GitHub Release — publish it so /releases/latest (and in-app updates) work.
 #
-# Optional secrets (Google Calendar in release builds):
+# Secrets:
 #   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 name: Release
 
@@ -64,19 +65,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           VITE_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Tangent ${{ github.ref_name }}
           releaseBody: |
-            Unsigned beta — see [install instructions](https://github.com/${{ github.repository }}/blob/main/docs/releasing.md).
+            Includes in-app updater support.
+
+            Unsigned OS installers — see [install instructions](https://github.com/${{ github.repository }}/blob/master/docs/releasing.md).
 
             **Windows:** SmartScreen may warn → More info → Run anyway.
 
             **Mac:** Open the `.dmg` → drag Tangent to Applications → **eject the disk image**.
-            Then open System Settings → Privacy & Security → **Open Anyway**, or right-click → Open.
-            (Build is ad-hoc signed so Gatekeeper should not show the false “damaged” dialog.)
-
-            Add SHA-256 checksums here before publishing the draft.
+            Then System Settings → Privacy & Security → **Open Anyway** if needed.
           releaseDraft: true
-          prerelease: true
+          prerelease: false
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}

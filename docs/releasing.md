@@ -31,8 +31,11 @@ For GitHub Actions, add repository **secrets** (Settings → Secrets and variabl
 
 - `GOOGLE_OAUTH_CLIENT_ID` — your `*.apps.googleusercontent.com` client ID
 - `GOOGLE_OAUTH_CLIENT_SECRET` — required for Web-application OAuth clients (same as local `.env`)
+- `TAURI_SIGNING_PRIVATE_KEY` — updater private key (from `npx tauri signer generate`)
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — password for that key (empty string if none)
 
-Without these, the app still works — only **Connect Google Calendar** is disabled.
+Without Google secrets, the app still works — only **Connect Google Calendar** is disabled.
+Without updater signing secrets, release builds will fail once `createUpdaterArtifacts` is enabled.
 
 ### 3. Icons
 

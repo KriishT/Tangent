@@ -227,6 +227,8 @@ pub fn run() {
             Some(vec![]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // --- System tray ---
             let open_i = MenuItem::with_id(app, "open", "Open Tangent", true, None::<&str>)?;

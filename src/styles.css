@@ -555,6 +555,26 @@ body.capture-window {
   background: var(--canvas);
 }
 
+.update-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.update-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 720px) {
   .sidebar {
     width: var(--sidebar-w-narrow);
@@ -734,6 +754,16 @@ body.capture-window {
 .btn.secondary:hover {
   background: var(--surface-muted);
   box-shadow: none;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--stroke);
+  box-shadow: none;
+}
+.btn.ghost:hover {
+  background: var(--surface-muted);
+  color: var(--text-heading);
 }
 .btn.danger {
   background: var(--danger-soft);

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tangent",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "com.tangent.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -50,6 +50,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis", "dmg"],
     "shortDescription": "Catch stray thoughts without leaving your flow.",
     "longDescription": "Tangent is a local-first desktop app. Hold a hotkey to capture voice or type quick notes with work context, then triage them later.",
@@ -75,5 +76,15 @@
       "signingIdentity": "-"
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1MENGRTY5OEIxRTM5MzAKUldRd09SNkxhZjRNNVlvRlZPR0hxaXo3SDBOUVg4UytERWlSY3NraURUNVM0V2hEMkdnOHovRVcK",
+      "endpoints": [
+        "https://github.com/KriishT/Tangent/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

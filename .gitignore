@@ -15,3 +15,8 @@ src-tauri/target
 models/*.bin
 models/*.gguf
 src-tauri/resources/models/*.bin
+
+# updater signing keys (never commit private key)
+keys/
+*.key
+
