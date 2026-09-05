@@ -84,25 +84,10 @@ jobs:
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
 
-      # tauri-action may skip uploading macOS .app.tar.gz; attach them explicitly for the updater.
-      - name: Upload macOS updater bundles
-        if: runner.os == 'macOS'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          ls -la src-tauri/target/release/bundle/macos/ || true
-          mapfile -t files < <(find src-tauri/target/release/bundle -type f \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) | sort)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No macOS updater artifacts found"
-            exit 1
-          fi
-          printf 'Uploading:\n%s\n' "${files[@]}"
-          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
-
+  # Rebuild latest.json after both platforms so Windows + Darwin stay in sync.
   finalize-updater-json:
     needs: build
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
