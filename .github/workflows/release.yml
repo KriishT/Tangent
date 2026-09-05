@@ -84,17 +84,78 @@ jobs:
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
 
-      # tauri-action sometimes uploads only the .dmg on macOS; updater needs .app.tar.gz + .sig.
+      # tauri-action may skip uploading macOS .app.tar.gz; attach them explicitly for the updater.
       - name: Upload macOS updater bundles
         if: runner.os == 'macOS'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          shopt -s nullglob
-          files=(src-tauri/target/release/bundle/macos/*.app.tar.gz src-tauri/target/release/bundle/macos/*.app.tar.gz.sig)
+          set -euo pipefail
+          ls -la src-tauri/target/release/bundle/macos/ || true
+          mapfile -t files < <(find src-tauri/target/release/bundle -type f \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) | sort)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No macOS updater artifacts found"
             exit 1
           fi
+          printf 'Uploading:\n%s\n' "${files[@]}"
           gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+
+  finalize-updater-json:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Build combined latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rel
+          gh release download "$TAG" -D /tmp/rel -R "$GITHUB_REPOSITORY"
+          ls -la /tmp/rel
+          export PUB_DATE
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          python3 <<'PY'
+          import json, os, pathlib
+
+          tag = os.environ["TAG"]
+          version = tag.lstrip("v")
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}"
+          platforms = {}
+          rel = pathlib.Path("/tmp/rel")
+
+          def add(key: str, artifact_glob: str, sig_glob: str) -> None:
+              arts = [p for p in sorted(rel.glob(artifact_glob)) if not p.name.endswith(".sig")]
+              sigs = sorted(rel.glob(sig_glob))
+              if not arts or not sigs:
+                  print(f"skip {key}: arts={arts} sigs={sigs}")
+                  return
+              platforms[key] = {
+                  "url": f"{base}/{arts[0].name}",
+                  "signature": sigs[0].read_text(encoding="utf-8").strip(),
+              }
+
+          add("windows-x86_64", "*x64-setup.exe", "*x64-setup.exe.sig")
+          add("windows-x86_64-nsis", "*x64-setup.exe", "*x64-setup.exe.sig")
+          add("darwin-aarch64", "*.app.tar.gz", "*.app.tar.gz.sig")
+
+          if "windows-x86_64" not in platforms:
+              raise SystemExit("missing windows updater assets")
+
+          data = {
+              "version": version,
+              "notes": "Tangent update",
+              "pub_date": os.environ["PUB_DATE"],
+              "platforms": platforms,
+          }
+          out = pathlib.Path("/tmp/latest.json")
+          out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          print(out.read_text())
+          PY
+
+          gh release upload "$TAG" /tmp/latest.json --clobber -R "$GITHUB_REPOSITORY"
