@@ -251,6 +251,19 @@ pub fn stop_and_transcribe(app: &AppHandle, model_path: String) -> Result<String
         return Err(format!("no audio captured — {hint}"));
     }
 
+    let peak = samples.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
+    if peak < 0.001 {
+        return Err(format!(
+            "Microphone is silent{device}. {hint}",
+            device = if mic_name.is_empty() {
+                String::new()
+            } else {
+                format!(" (\"{mic_name}\")")
+            },
+            hint = mic_permission_hint()
+        ));
+    }
+
     let resolved = resolve_model_path(app, &model_path)?;
     let mut pcm = resample_to_16k(&samples, in_rate);
     preprocess_pcm(&mut pcm);
@@ -379,6 +392,11 @@ where
 
     if needs_reload {
         let mut ctx_params = WhisperContextParameters::default();
+        // Metal whisper on Apple Silicon can init fine and still return empty text
+        // on short hold-to-talk clips. CPU is reliable and fast enough for base.en.
+        #[cfg(target_os = "macos")]
+        ctx_params.use_gpu(false);
+        #[cfg(not(target_os = "macos"))]
         ctx_params.use_gpu(true);
 
         let ctx = match WhisperContext::new_with_params(model_path, ctx_params) {

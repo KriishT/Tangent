@@ -4,7 +4,11 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Tangent records short voice notes when you hold the capture hotkey.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Tangent records short voice notes when you hold the capture hotkey.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Tangent returns focus to the app you were using before capture.</string>
+  <key>NSUserNotificationUsageDescription</key>
+  <string>Tangent uses notifications for triage reminders and capture results.</string>
 </dict>
 </plist>
