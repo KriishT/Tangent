@@ -7,8 +7,12 @@
   <key>NSAudioCaptureUsageDescription</key>
   <string>Tangent records short voice notes when you hold the capture hotkey.</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Tangent returns focus to the app you were using before capture.</string>
+  <string>Tangent reads the frontmost app and browser tab so each thought keeps the file or page you were on, then returns focus after capture.</string>
   <key>NSUserNotificationUsageDescription</key>
-  <string>Tangent uses notifications for triage reminders and capture results.</string>
+  <string>Tangent uses notifications for due reminders and check-ins.</string>
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>Tangent uses notifications for due reminders and check-ins.</string>
+  <key>NSUserNotificationAlertStyle</key>
+  <string>alert</string>
 </dict>
 </plist>

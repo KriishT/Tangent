@@ -10,6 +10,7 @@ import {
   formatCheckInTimesLabel,
   formatNudgeIntervalLabel,
   activeCheckInTimes,
+  parseCheckInTime,
   phoneCheckInTimes,
   saveSettings,
   type AppSettings,
@@ -34,6 +35,7 @@ import { exportAll } from "../lib/db";
 import { emit, listen } from "@tauri-apps/api/event";
 import { checkForAppUpdate, installAppUpdate } from "../lib/updater";
 import { getVersion } from "@tauri-apps/api/app";
+import { isMacPlatform, pushNotification } from "../lib/notify";
 
 function applyChosenTimesModes(prev: AppSettings, checkInTimes: string[]): AppSettings {
   const updated = { ...prev, checkInTimes };
@@ -47,17 +49,61 @@ function applyChosenTimesModes(prev: AppSettings, checkInTimes: string[]): AppSe
   return updated;
 }
 
+function CheckInTimeRow({
+  value,
+  onChange,
+  onRemove,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onRemove: () => void;
+}) {
+  const parsed = parseCheckInTime(value) ?? { hour: 18, minute: 0 };
+  const set = (hour: number, minute: number) =>
+    onChange(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+
+  return (
+    <div
+      className="row checkin-time-row"
+      style={{ gap: 8 }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <select
+        aria-label="Hour"
+        value={parsed.hour}
+        onChange={(e) => set(Number(e.target.value), parsed.minute)}
+      >
+        {Array.from({ length: 24 }, (_, h) => (
+          <option key={h} value={h}>
+            {String(h).padStart(2, "0")}
+          </option>
+        ))}
+      </select>
+      <span className="desc">:</span>
+      <select
+        aria-label="Minute"
+        value={parsed.minute}
+        onChange={(e) => set(parsed.hour, Number(e.target.value))}
+      >
+        {Array.from({ length: 60 }, (_, m) => (
+          <option key={m} value={m}>
+            {String(m).padStart(2, "0")}
+          </option>
+        ))}
+      </select>
+      <button type="button" className="btn" onClick={onRemove}>
+        Remove
+      </button>
+    </div>
+  );
+}
+
 function localTzLabel(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
   } catch {
     return "system default";
   }
-}
-
-function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? navigator.userAgent);
 }
 
 export default function Settings({
@@ -261,7 +307,7 @@ export default function Settings({
   }
 
   return (
-    <div>
+    <div onKeyDown={(e) => e.stopPropagation()}>
       <div className="page-title">Settings</div>
       <div className="page-sub">Private and local by default.</div>
 
@@ -399,6 +445,13 @@ export default function Settings({
         </div>
         {s.contextEnabled && (
           <>
+            {onMac && (
+              <div className="desc" style={{ marginTop: 10 }}>
+                macOS: allow Tangent under System Settings → Privacy &amp; Security →{" "}
+                <strong>Accessibility</strong> so window titles are captured. For Chrome / Safari
+                page names, allow Tangent when asked to control that browser.
+              </div>
+            )}
             <div className="desc" style={{ marginTop: 10 }}>
               Blocklist (one fragment per line) — never store context from matching apps/titles.
             </div>
@@ -504,34 +557,32 @@ export default function Settings({
         <div className="desc">
           Each time becomes its own daily &quot;Check Tangent&quot; on Google Calendar plus a
           desktop popup (Tangent must stay in the tray). Saving creates one event per time.
+          {onMac
+            ? " On Mac, allow banners under System Settings → Notifications → Tangent."
+            : ""}
         </div>
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div
+          style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
           {(s.checkInTimes ?? []).map((t, i) => (
-            <div className="row" key={`${i}-${t}`} style={{ gap: 8 }}>
-              <input
-                type="time"
-                value={t}
-                onChange={(e) => {
-                  const next = [...(s.checkInTimes ?? [])];
-                  next[i] = e.target.value;
-                  setS((prev) => applyChosenTimesModes(prev, next));
-                }}
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() =>
-                  setS((prev) =>
-                    applyChosenTimesModes(
-                      prev,
-                      (prev.checkInTimes ?? []).filter((_, j) => j !== i),
-                    ),
-                  )
-                }
-              >
-                Remove
-              </button>
-            </div>
+            <CheckInTimeRow
+              key={i}
+              value={t}
+              onChange={(next) => {
+                const times = [...(s.checkInTimes ?? [])];
+                times[i] = next;
+                setS((prev) => applyChosenTimesModes(prev, times));
+              }}
+              onRemove={() =>
+                setS((prev) =>
+                  applyChosenTimesModes(
+                    prev,
+                    (prev.checkInTimes ?? []).filter((_, j) => j !== i),
+                  ),
+                )
+              }
+            />
           ))}
           <button
             type="button"
@@ -543,6 +594,21 @@ export default function Settings({
             }
           >
             + Add time
+          </button>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              void pushNotification(
+                "Tangent",
+                "Notifications are working. Due reminders and check-ins will look like this.",
+              ).then(
+                () => flash("Test notification sent"),
+                (e) => flash(e instanceof Error ? e.message : String(e)),
+              );
+            }}
+          >
+            Test notification
           </button>
         </div>
         <div className="desc" style={{ marginTop: 8 }}>

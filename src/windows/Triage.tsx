@@ -34,6 +34,7 @@ import {
   addThoughtToGoogleCalendar,
 } from "../lib/googleCalendar";
 import { exportIcsForThought } from "../lib/calendar";
+import { pushNotification } from "../lib/notify";
 
 type TriageProps = {
   /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
@@ -134,16 +135,20 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
 
     if (s.contextEnabled) {
       try {
-        const ctx = await invoke<{ app_name: string | null; title: string | null; process_path?: string | null }>(
-          "get_work_context"
-        );
+        const ctx = await invoke<{
+          app_name: string | null;
+          title: string | null;
+          process_path?: string | null;
+          url?: string | null;
+        }>("get_work_context");
         const blocked = isBlocked(s, ctx.app_name, ctx.title);
         if (!blocked) {
           const { detail, extra } = buildContextFields(
             ctx.app_name,
             ctx.title,
             ctx.process_path ?? null,
-            capturedAt
+            capturedAt,
+            ctx.url ?? null,
           );
           ctxApp = ctx.app_name;
           ctxTitle = ctx.title;
@@ -180,8 +185,12 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     }
 
     await reload();
-    if (dueAt && isTentativeDue(dueInfo)) {
-      flash(`Due ${formatDueTimeLabel(dueAt)} — tap Change due to adjust`);
+    if (dueAt) {
+      const dueMsg = isTentativeDue(dueInfo)
+        ? `Due ${formatDueTimeLabel(dueAt)} — tap Change due to adjust`
+        : `Due ${formatDueTimeLabel(dueAt)}`;
+      flash(dueMsg);
+      void pushNotification("Tangent", dueMsg);
     }
     void emit("thought-added", {}).catch(() => {});
   }, [draft, reload, flash]);
@@ -256,7 +265,16 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
       );
       if (result.outcome === "cancelled") return;
       const msg = messageForCalendarOutcome(result);
-      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+      if (msg) {
+        flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+        if (
+          result.outcome === "created" ||
+          result.outcome === "updated" ||
+          result.outcome === "opened"
+        ) {
+          void pushNotification("Tangent", msg);
+        }
+      }
       if (
         result.outcome === "created" ||
         result.outcome === "opened" ||
@@ -288,7 +306,16 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         );
         if (result.outcome === "cancelled") return;
         const msg = messageForCalendarOutcome(result);
-        if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+        if (msg) {
+          flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+          if (
+            result.outcome === "created" ||
+            result.outcome === "updated" ||
+            result.outcome === "opened"
+          ) {
+            void pushNotification("Tangent", msg);
+          }
+        }
         if (
           result.outcome === "created" ||
           result.outcome === "opened" ||

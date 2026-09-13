@@ -1,8 +1,10 @@
 mod context;
 mod google_calendar;
+mod notify;
 #[cfg(feature = "voice")]
 mod voice;
 
+use notify::native_notify;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
@@ -276,6 +278,11 @@ pub fn run() {
             }
             tray.build(app)?;
 
+            if let Some(capture) = app.get_webview_window("capture") {
+                let _ = capture.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+            }
+            context::request_accessibility_access();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -285,6 +292,7 @@ pub fn run() {
             get_work_context,
             begin_voice,
             end_voice,
+            native_notify,
             google_oauth_connect,
             google_oauth_revoke,
             google_calendar_create_event,

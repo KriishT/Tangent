@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { sendNotification } from "@tauri-apps/plugin-notification";
+import { pushNotification } from "./lib/notify";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { DialogProvider, useDialog } from "./components/DialogProvider";
 import Logo from "./components/Logo";
@@ -49,10 +49,10 @@ function AppShell() {
         await installAppUpdate(update);
       } catch (e) {
         setUpdating(false);
-        void sendNotification({
-          title: "Tangent — update failed",
-          body: e instanceof Error ? e.message : String(e),
-        });
+        void pushNotification(
+          "Tangent — update failed",
+          e instanceof Error ? e.message : String(e),
+        );
       }
     },
     [confirm],
@@ -74,7 +74,7 @@ function AppShell() {
   useEffect(() => {
     void applyHotkey().then((err) => {
       if (err) {
-        void sendNotification({ title: "Tangent — hotkey", body: err });
+        void pushNotification("Tangent — hotkey", err);
       }
     });
     void ensureDefaultAutostart();
@@ -114,15 +114,15 @@ function AppShell() {
           setTab("triage");
           setDataRev((n) => n + 1);
           if (detail?.trim()) {
-            void sendNotification({ title: "Tangent", body: detail });
+            void pushNotification("Tangent", detail);
           }
           return;
         }
         if (detail) {
-          void sendNotification({
-            title: outcome === "error" ? "Tangent — voice capture" : "Tangent",
-            body: detail,
-          });
+          void pushNotification(
+            outcome === "error" ? "Tangent — voice capture" : "Tangent",
+            detail,
+          );
         }
       },
     );

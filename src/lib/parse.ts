@@ -244,6 +244,8 @@ export interface ContextExtra {
   process_path: string | null;
   file: string | null;
   workspace: string | null;
+  /** Browser tab URL when captured from Safari/Chrome/etc. */
+  url?: string | null;
   /** Human-readable location, e.g. "MemRemem › src-tauri › src › context.rs" */
   location: string | null;
   segments: string[];
@@ -255,6 +257,41 @@ export interface ContextExtra {
 
 const EDITOR_APPS =
   /^(cursor|visual studio code|code|vscode|vs code|neovim|nvim|sublime text|intellij idea|webstorm|pycharm|android studio|notepad\+\+|zed)$/i;
+
+const BROWSER_APPS =
+  /chrome|safari|firefox|edge|brave|arc|orion|vivaldi|dia|chromium|comet/i;
+
+function hostFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/** Last path segment or a site-specific label when the window title is just the app name. */
+function pageHintFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "");
+    if (host === "youtu.be" || host.endsWith("youtube.com")) {
+      if (u.searchParams.get("v") || host === "youtu.be") return "YouTube video";
+      if (u.pathname.startsWith("/shorts/")) return "YouTube Short";
+      return "YouTube";
+    }
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length === 0) return host || null;
+    try {
+      return decodeURIComponent(parts[parts.length - 1]!.replace(/[-_]+/g, " "));
+    } catch {
+      return parts[parts.length - 1] ?? host;
+    }
+  } catch {
+    return null;
+  }
+}
 
 function splitTitle(title: string): string[] {
   return title
@@ -290,19 +327,23 @@ export function buildContextFields(
   app: string | null,
   title: string | null,
   processPath: string | null = null,
-  capturedAt?: Date
+  capturedAt?: Date,
+  url: string | null = null,
 ): { detail: string | null; extra: ContextExtra | null } {
   if (!title?.trim()) {
-    if (!capturedAt && !app) {
+    if (!capturedAt && !app && !url) {
       return { detail: app ?? null, extra: null };
     }
+    const host = hostFromUrl(url);
+    const page = pageHintFromUrl(url);
     const extra: ContextExtra = {
       window_title: "",
       app,
       process_path: processPath,
-      file: null,
-      workspace: null,
-      location: null,
+      file: page && page !== host ? page : null,
+      workspace: host,
+      url: url,
+      location: host && page && page !== host ? `${host} › ${page}` : host,
       segments: [],
     };
     if (capturedAt) {
@@ -314,6 +355,7 @@ export function buildContextFields(
 
   const segments = splitTitle(title);
   const appLower = (app ?? "").trim().toLowerCase();
+  const host = hostFromUrl(url);
 
   let file: string | null = null;
   let workspace: string | null = null;
@@ -343,6 +385,14 @@ export function buildContextFields(
           location = file;
         }
       }
+    } else if (BROWSER_APPS.test(appLower) || host) {
+      // "Video title - YouTube - Google Chrome" or "Video title - YouTube"
+      const last = segments[segments.length - 1]!.toLowerCase();
+      const lastIsApp = BROWSER_APPS.test(last) || last === appLower;
+      const pageParts = lastIsApp ? segments.slice(0, -1) : segments;
+      file = pageParts[0] ?? title.trim();
+      workspace = host ?? pageParts[pageParts.length - 1] ?? null;
+      location = workspace && file && workspace !== file ? `${workspace} › ${file}` : file;
     } else {
       // Generic: "Document - Something" without trailing app name
       file = segments[0]!;
@@ -354,8 +404,20 @@ export function buildContextFields(
       }
     }
   } else {
-    file = segments[0] ?? title.trim();
-    location = looksLikePath(file) ? normalizePathSegments(file).join(" › ") : file;
+    const titleIsJustApp = title.trim().toLowerCase() === appLower;
+    if (titleIsJustApp && host) {
+      file = pageHintFromUrl(url) ?? host;
+      workspace = host;
+      location = file && file !== host ? `${host} › ${file}` : host;
+    } else {
+      file = segments[0] ?? title.trim();
+      workspace = host;
+      location = looksLikePath(file)
+        ? normalizePathSegments(file).join(" › ")
+        : host && file
+          ? `${host} › ${file}`
+          : file;
+    }
   }
 
   const detail = workspace && file ? `${workspace} · ${file}` : file ?? app ?? null;
@@ -366,6 +428,7 @@ export function buildContextFields(
     process_path: processPath,
     file,
     workspace,
+    url,
     location,
     segments,
   };

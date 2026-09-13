@@ -1,8 +1,5 @@
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { isMacPlatform, pushNotification } from "./notify";
 import { dueForResurface, markNotified, stats } from "./db";
 import {
   chosenCheckInTimes,
@@ -29,9 +26,18 @@ function isWithinPickedSlot(nowM: number, slotM: number): boolean {
 }
 
 export async function ensureNotifications(): Promise<boolean> {
-  granted = await isPermissionGranted();
-  if (!granted) {
-    granted = (await requestPermission()) === "granted";
+  try {
+    granted = await isPermissionGranted();
+    if (!granted) {
+      granted = (await requestPermission()) === "granted";
+    }
+  } catch {
+    granted = false;
+  }
+  // Unsigned Mac builds often fail the plugin permission check even though
+  // `display notification` still works. Don't swallow due/check-in banners.
+  if (!granted && isMacPlatform()) {
+    granted = true;
   }
   return granted;
 }
@@ -41,7 +47,7 @@ export async function runResurfaceTick(): Promise<void> {
   if (!granted) return;
   const due = await dueForResurface();
   for (const t of due) {
-    sendNotification({ title: "Tangent reminder", body: t.body });
+    void pushNotification("Tangent reminder", t.body);
     await markNotified(t.id);
   }
 }
@@ -115,10 +121,7 @@ export async function maybeTriageNudge(): Promise<void> {
       ? `Check Tangent now — ${st.parked} parked thought${st.parked === 1 ? "" : "s"} waiting.`
       : "Check Tangent now.";
 
-  sendNotification({
-    title: "Tangent",
-    body,
-  });
+  void pushNotification("Tangent", body);
 
   const now = new Date();
   const patch: Partial<AppSettings> = {

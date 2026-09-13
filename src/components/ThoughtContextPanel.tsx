@@ -32,6 +32,7 @@ export default function ThoughtContextPanel({ thought }: Props) {
   if (extra?.workspace) rows.push({ label: "Workspace / folder", value: extra.workspace });
   if (extra?.file) rows.push({ label: "File", value: extra.file });
   if (extra?.window_title) rows.push({ label: "Window title", value: extra.window_title });
+  if (extra?.url) rows.push({ label: "Page URL", value: extra.url });
   if (extra?.app) rows.push({ label: "Application", value: extra.app });
   if (extra?.process_path) rows.push({ label: "App path", value: extra.process_path });
 

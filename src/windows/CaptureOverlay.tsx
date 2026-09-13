@@ -22,6 +22,10 @@ export default function CaptureOverlay() {
   useEffect(() => {
     document.documentElement.classList.add("capture-window");
     document.body.classList.add("capture-window");
+    document.documentElement.style.colorScheme = "only light";
+    document.body.style.colorScheme = "only light";
+    document.documentElement.style.background = "transparent";
+    document.body.style.background = "transparent";
 
     const unPhase = listen<string>("voice-phase", (e) => {
       const next = e.payload;

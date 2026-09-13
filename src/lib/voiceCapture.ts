@@ -146,7 +146,8 @@ export async function stopVoiceCapture(): Promise<void> {
     ctx.app_name,
     ctx.title,
     ctx.process_path ?? null,
-    capturedAt
+    capturedAt,
+    ctx.url ?? null,
   );
 
   const id = await insertThought({
@@ -175,9 +176,10 @@ export async function stopVoiceCapture(): Promise<void> {
   }
 
   void emit("thought-added", {}).catch(() => {});
-  const savedDetail =
-    dueAt && isTentativeDue(dueInfo)
+  const savedDetail = dueAt
+    ? isTentativeDue(dueInfo)
       ? `Due ${formatDueTimeLabel(dueAt)} — tap Change due to adjust`
-      : undefined;
+      : `Due ${formatDueTimeLabel(dueAt)}`
+    : undefined;
   await notifyCaptureResult("saved", savedDetail);
 }

@@ -4,6 +4,7 @@ export interface WorkContext {
   app_name: string | null;
   title: string | null;
   process_path?: string | null;
+  url?: string | null;
 }
 
 export interface Thought {

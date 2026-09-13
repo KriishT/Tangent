@@ -13,6 +13,7 @@ import {
   updateBody,
 } from "../lib/db";
 import { dueClassName } from "../lib/parse";
+import { pushNotification } from "../lib/notify";
 import {
   scheduleThoughtDueTime,
   messageForCalendarOutcome,
@@ -157,7 +158,16 @@ export default function Lists() {
     );
     if (result.outcome === "cancelled") return;
     const msg = messageForCalendarOutcome(result);
-    if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+    if (msg) {
+      flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
+      if (
+        result.outcome === "created" ||
+        result.outcome === "updated" ||
+        result.outcome === "opened"
+      ) {
+        void pushNotification("Tangent", msg);
+      }
+    }
     if (
       result.outcome === "created" ||
       result.outcome === "opened" ||
