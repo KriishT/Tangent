@@ -7,7 +7,13 @@
   <key>NSAudioCaptureUsageDescription</key>
   <string>Tangent records short voice notes when you hold the capture hotkey.</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Tangent reads the frontmost app and browser tab so each thought keeps the file or page you were on, then returns focus after capture.</string>
+  <string>Tangent reads the frontmost app and browser tab, returns focus after capture, and can add reminders to Calendar.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Tangent adds due thoughts and check-ins to Apple Calendar when you connect it in Settings.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Tangent adds due thoughts and check-ins to Apple Calendar when you connect it in Settings.</string>
+  <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+  <string>Tangent adds due thoughts and check-ins to Apple Calendar when you connect it in Settings.</string>
   <key>NSUserNotificationUsageDescription</key>
   <string>Tangent uses notifications for due reminders and check-ins.</string>
   <key>NSUserNotificationsUsageDescription</key>

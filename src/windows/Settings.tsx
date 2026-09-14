@@ -31,6 +31,17 @@ import {
   applyGoogleCalendarSettings,
   wipeAllThoughtsWithCalendar,
 } from "../lib/googleCalendar";
+import {
+  connectAppleCalendar,
+  disconnectAppleCalendar,
+  syncAppleCheckIn,
+} from "../lib/appleCalendar";
+import {
+  connectOutlook,
+  disconnectOutlook,
+  isOutlookOAuthConfigured,
+  syncOutlookCheckIn,
+} from "../lib/outlookCalendar";
 import { exportAll } from "../lib/db";
 import { emit, listen } from "@tauri-apps/api/event";
 import { checkForAppUpdate, installAppUpdate } from "../lib/updater";
@@ -118,6 +129,8 @@ export default function Settings({
   const [autostart, setAutostart] = useState(false);
   const [toast, setToast] = useState("");
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [appleBusy, setAppleBusy] = useState(false);
+  const [outlookBusy, setOutlookBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -184,8 +197,25 @@ export default function Settings({
 
       await saveSettings(toSave);
       const { settings: synced, message, error } = await applyGoogleCalendarSettings(toSave);
-      await saveSettings(synced);
-      setS(synced);
+      let next = synced;
+      try {
+        next = await syncAppleCheckIn(next);
+      } catch (e) {
+        await saveSettings(next);
+        setS(next);
+        flash(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      try {
+        next = await syncOutlookCheckIn(next);
+      } catch (e) {
+        await saveSettings(next);
+        setS(next);
+        flash(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      await saveSettings(next);
+      setS(next);
       await applyHotkey().then((hotkeyErr) => {
         if (hotkeyErr) flash(hotkeyErr);
       });
@@ -257,6 +287,58 @@ export default function Settings({
       flash(e instanceof Error ? e.message : String(e));
     } finally {
       setGoogleBusy(false);
+    }
+  }
+
+  async function onConnectApple() {
+    setAppleBusy(true);
+    try {
+      const next = await connectAppleCalendar();
+      setS(next);
+      flash("Apple Calendar connected — due times go to the Tangent calendar");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAppleBusy(false);
+    }
+  }
+
+  async function onDisconnectApple() {
+    setAppleBusy(true);
+    try {
+      setS(await disconnectAppleCalendar());
+      flash("Apple Calendar disconnected");
+    } catch {
+      setS(await loadSettings());
+      flash("Apple Calendar disconnected");
+    } finally {
+      setAppleBusy(false);
+    }
+  }
+
+  async function onConnectOutlook() {
+    setOutlookBusy(true);
+    try {
+      const next = await connectOutlook();
+      setS(next);
+      flash(`Connected as ${next.outlookEmail ?? "Outlook"}`);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOutlookBusy(false);
+    }
+  }
+
+  async function onDisconnectOutlook() {
+    setOutlookBusy(true);
+    try {
+      setS(await disconnectOutlook());
+      flash("Outlook disconnected");
+    } catch {
+      setS(await loadSettings());
+      flash("Outlook disconnected");
+    } finally {
+      setOutlookBusy(false);
     }
   }
 
@@ -634,11 +716,74 @@ export default function Settings({
       <div className="setting">
         <label>Calendar reminders</label>
         <div className="desc">
-          <strong>Recommended:</strong> set a due time on any thought (press <strong>t</strong> in
-          Triage), then press <strong>i</strong> to download a <code>.ics</code> file. Import it
-          into Google Calendar, Outlook, or Apple Calendar — phone alerts work with zero sign-in.
-          Desktop notifications still fire when Tangent is running.
+          Connect Apple Calendar, Outlook, or Google below — then <strong>Set due</strong> /{" "}
+          <strong>t</strong> creates the event automatically. Or press <strong>i</strong> to
+          download a <code>.ics</code> file with no sign-in. Desktop popups still fire while
+          Tangent is in the tray.
         </div>
+      </div>
+
+      <div className="setting">
+        <label>Apple Calendar</label>
+        <div className="desc">
+          {onMac
+            ? "Connect once. Due times land in a Tangent calendar on this Mac. If iCloud Calendar is on, they sync to your iPhone."
+            : "Available on Mac. On Windows, use Outlook or Google below, or download a .ics file."}
+        </div>
+        {onMac ? (
+          <div className="row" style={{ marginTop: 12, gap: 10 }}>
+            {s.appleCalendarEnabled ? (
+              <>
+                <span className="desc" style={{ flex: 1 }}>
+                  Connected — events go to the Tangent calendar
+                </span>
+                <button className="btn" onClick={() => void onDisconnectApple()} disabled={appleBusy}>
+                  {appleBusy ? "Disconnecting…" : "Disconnect"}
+                </button>
+              </>
+            ) : (
+              <button className="btn" onClick={() => void onConnectApple()} disabled={appleBusy}>
+                {appleBusy ? "Opening Calendar…" : "Connect Apple Calendar"}
+              </button>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="setting">
+        <label>Outlook</label>
+        <div className="desc">
+          Connect once for automatic events in Outlook / Microsoft 365. Uses a{" "}
+          <strong>Tangent Reminders</strong> calendar. When connected, Set due / <strong>t</strong>{" "}
+          creates the event.
+        </div>
+        {isOutlookOAuthConfigured() ? (
+          <div className="row" style={{ marginTop: 12, gap: 10 }}>
+            {s.outlookTokens?.refreshToken ? (
+              <>
+                <span className="desc" style={{ flex: 1 }}>
+                  Connected{s.outlookEmail ? ` as ${s.outlookEmail}` : ""}
+                </span>
+                <button
+                  className="btn"
+                  onClick={() => void onDisconnectOutlook()}
+                  disabled={outlookBusy}
+                >
+                  {outlookBusy ? "Disconnecting…" : "Disconnect"}
+                </button>
+              </>
+            ) : (
+              <button className="btn" onClick={() => void onConnectOutlook()} disabled={outlookBusy}>
+                {outlookBusy ? "Waiting for browser…" : "Connect Outlook"}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="desc" style={{ marginTop: 10 }}>
+            Not available in this build yet (Microsoft app id not set). Use{" "}
+            <code>.ics</code> export or Google Calendar until the next signed release includes it.
+          </div>
+        )}
       </div>
 
       <div className="setting">
@@ -678,7 +823,7 @@ export default function Settings({
         {isGoogleOAuthConfigured() && (
           <>
             <div style={{ marginTop: 14 }}>
-              <label>Phone check-in reminders (Google Calendar)</label>
+              <label>Phone check-in reminders</label>
               <div className="desc">
                 Separate from desktop triage pings above. Uses a <strong>Tangent Reminders</strong>{" "}
                 calendar so your main calendar stays clean. Saving replaces the old schedule.
@@ -748,7 +893,11 @@ export default function Settings({
       </div>
 
       <div className="row" style={{ marginTop: 18, gap: 10, flexWrap: "wrap" }}>
-        <button className="btn" onClick={() => void onSave()} disabled={saving || googleBusy}>
+        <button
+          className="btn"
+          onClick={() => void onSave()}
+          disabled={saving || googleBusy || appleBusy || outlookBusy}
+        >
           {saving ? "Saving…" : "Save settings"}
         </button>
         <button className="btn secondary" type="button" onClick={() => void onExport()}>

@@ -90,6 +90,16 @@ export interface AppSettings {
   /** One recurring series per chosen check-in time. */
   googleCheckInEventIds?: string[];
   googleCheckInCalendarId?: string;
+  appleCalendarEnabled?: boolean;
+  appleCheckInEventIds?: string[];
+  outlookEmail?: string;
+  outlookTokens?: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt: number;
+  };
+  outlookCalendarId?: string;
+  outlookCheckInEventIds?: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

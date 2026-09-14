@@ -7,19 +7,21 @@ import {
   saveSettings,
   calendarReminderMinutesFromSettings,
   phoneCheckInTimes,
-  parseCheckInTime,
   type AppSettings,
 } from "./settings";
 import { googleCalendarUrlForThought } from "./calendar";
 import { parseDueInput } from "./parse";
-import { setCalendarEventId, setDueAt, listWithCalendarEvents, wipeAll, deleteThought } from "./db";
+import { setCalendarEventId, setDueAt, listWithCalendarEvents, wipeAll, deleteThought, getThought } from "./db";
+import { buildCheckInSlots } from "./calendarSlots";
+import { deleteAppleEvent, isAppleCalendarConnected, upsertAppleEvent } from "./appleCalendar";
+import { deleteOutlookEvent, isOutlookConnected, upsertOutlookEvent } from "./outlookCalendar";
 import {
   GOOGLE_OAUTH_CLIENT_ID,
   GOOGLE_OAUTH_CLIENT_SECRET,
   isGoogleOAuthConfigured,
 } from "./googleOAuthConfig";
 
-const CHECKIN_DURATION_MS = 1 * 60 * 1000;
+export { buildCheckInSlots } from "./calendarSlots";
 
 let checkInSyncChain: Promise<unknown> = Promise.resolve();
 
@@ -76,37 +78,8 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** Format a Date as local `YYYY-MM-DDTHH:mm:ss` for Google Calendar API. */
 function toLocalDateTimeString(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-}
-
-/** One Google Calendar series per chosen check-in time (reliable alerts). */
-export function buildCheckInSlots(
-  s: AppSettings,
-): { startLocal: string; endLocal: string }[] {
-  const times = phoneCheckInTimes(s);
-  if (times.length === 0) return [];
-
-  const now = new Date();
-  const slots: { startLocal: string; endLocal: string }[] = [];
-
-  for (const t of times) {
-    const p = parseCheckInTime(t);
-    if (!p) continue;
-    const start = new Date(now);
-    start.setHours(p.hour, p.minute, 0, 0);
-    if (start <= now) {
-      start.setDate(start.getDate() + 1);
-    }
-    const end = new Date(start.getTime() + CHECKIN_DURATION_MS);
-    slots.push({
-      startLocal: toLocalDateTimeString(start),
-      endLocal: toLocalDateTimeString(end),
-    });
-  }
-
-  return slots;
 }
 
 /** @deprecated use buildCheckInSlots */
@@ -337,7 +310,7 @@ export interface AddToCalendarResult {
 export function messageForCalendarOutcome(result: AddToCalendarResult): string {
   switch (result.outcome) {
     case "created":
-      return "Added to Google Calendar";
+      return "Added to calendar";
     case "updated":
       return "Due time saved";
     case "auth_disconnected":
@@ -382,11 +355,32 @@ export async function scheduleThoughtDueTime(
   if (!due) return { outcome: "bad_due" };
   await setDueAt(thought.id, due);
   const updated = { ...thought, due_at: due };
+  return pushDueToConnectedCalendars(updated);
+}
 
+async function pushDueToConnectedCalendars(thought: Thought): Promise<AddToCalendarResult> {
+  let result: AddToCalendarResult = { outcome: "updated" };
   if (await isGoogleCalendarConnected()) {
-    return addThoughtToGoogleCalendar(updated);
+    result = await addThoughtToGoogleCalendar(thought);
   }
-  return { outcome: "updated" };
+  const latest = (await getThought(thought.id)) ?? thought;
+  if (await isAppleCalendarConnected()) {
+    try {
+      await upsertAppleEvent(latest);
+      if (result.outcome === "updated") result = { outcome: "created" };
+    } catch (e) {
+      return { outcome: "failed", error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  if (await isOutlookConnected()) {
+    try {
+      await upsertOutlookEvent((await getThought(thought.id)) ?? latest);
+      if (result.outcome === "updated") result = { outcome: "created" };
+    } catch (e) {
+      return { outcome: "failed", error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  return result;
 }
 
 /** @deprecated use scheduleThoughtDueTime */
@@ -410,27 +404,30 @@ export async function addThoughtToGoogleCalendarWithDue(
 
 async function deleteThoughtCalendarEvent(thought: Thought): Promise<void> {
   const eventId = thought.calendar_event_id;
-  if (!eventId) return;
-  const settings = await loadSettings();
-  if (!settings.googleTokens?.refreshToken) {
-    await setCalendarEventId(thought.id, null);
-    return;
+  if (eventId) {
+    const settings = await loadSettings();
+    if (!settings.googleTokens?.refreshToken) {
+      await setCalendarEventId(thought.id, null);
+    } else {
+      try {
+        const result = await invoke<DeleteEventResult>("google_calendar_delete_event", {
+          params: {
+            clientId: GOOGLE_OAUTH_CLIENT_ID,
+            clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
+            tokens: settings.googleTokens,
+            eventId,
+            calendarId: null,
+          },
+        });
+        await saveSettings({ ...settings, googleTokens: result.tokens });
+      } catch {
+        /* best-effort — still clear local id */
+      }
+      await setCalendarEventId(thought.id, null);
+    }
   }
-  try {
-    const result = await invoke<DeleteEventResult>("google_calendar_delete_event", {
-      params: {
-        clientId: GOOGLE_OAUTH_CLIENT_ID,
-        clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
-        tokens: settings.googleTokens,
-        eventId,
-        calendarId: null,
-      },
-    });
-    await saveSettings({ ...settings, googleTokens: result.tokens });
-  } catch {
-    /* best-effort — still clear local id */
-  }
-  await setCalendarEventId(thought.id, null);
+  await deleteAppleEvent(thought);
+  await deleteOutlookEvent(thought);
 }
 
 /** Remove the Google Calendar event linked to a thought (best-effort). */
@@ -522,18 +519,7 @@ export async function autoAddThoughtToGoogleCalendarIfConnected(
   thought: Thought,
 ): Promise<AddToCalendarResult | void> {
   if (!thought.due_at) return;
-  const connected = await isGoogleCalendarConnected();
-  if (!connected) return;
-  try {
-    if (thought.calendar_event_id) {
-      await deleteThoughtCalendarEvent(thought);
-      thought = { ...thought, calendar_event_id: null };
-    }
-    await createEventViaApi(thought);
-    return { outcome: "created" };
-  } catch (e) {
-    return calendarFailureMaybeDisconnect(e);
-  }
+  return pushDueToConnectedCalendars(thought);
 }
 
 /**
@@ -546,13 +532,13 @@ export async function updateThoughtDueTime(
   dueInput: string | null,
 ): Promise<AddToCalendarResult> {
   const trimmed = dueInput?.trim() ?? "";
-  const hadCalendarEvent = Boolean(thought.calendar_event_id);
+  const hadCalendarEvent = Boolean(
+    thought.calendar_event_id || thought.apple_event_id || thought.outlook_event_id,
+  );
 
   if (!trimmed) {
     await setDueAt(thought.id, null);
-    if (hadCalendarEvent) {
-      await deleteThoughtCalendarEvent(thought);
-    }
+    await deleteThoughtCalendarEvent(thought);
     return { outcome: "cleared" };
   }
 
@@ -560,26 +546,27 @@ export async function updateThoughtDueTime(
   if (!due) return { outcome: "bad_due" };
 
   await setDueAt(thought.id, due);
-  let updated: Thought = { ...thought, due_at: due };
+  const updated: Thought = {
+    ...thought,
+    due_at: due,
+    calendar_event_id: null,
+    apple_event_id: null,
+    outlook_event_id: null,
+  };
 
-  if (!hadCalendarEvent) {
-    return { outcome: "updated" };
-  }
-
-  const connected = await isGoogleCalendarConnected();
-  if (!connected) {
-    await setCalendarEventId(thought.id, null);
-    return { outcome: "updated" };
-  }
-
-  try {
+  if (hadCalendarEvent) {
     await deleteThoughtCalendarEvent(thought);
-    updated = { ...updated, calendar_event_id: null };
-    await createEventViaApi(updated);
-    return { outcome: "updated" };
-  } catch (e) {
-    return calendarFailureMaybeDisconnect(e);
   }
+
+  const anyCal =
+    (await isGoogleCalendarConnected()) ||
+    (await isAppleCalendarConnected()) ||
+    (await isOutlookConnected());
+  if (!anyCal) {
+    return { outcome: "updated" };
+  }
+  const pushed = await pushDueToConnectedCalendars(updated);
+  return pushed.outcome === "created" ? { outcome: "updated" } : pushed;
 }
 
 /** Call after saving settings when triage/calendar options change. */

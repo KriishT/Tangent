@@ -166,17 +166,30 @@ export async function setDueAt(id: number, dueAt: string | null): Promise<void> 
   );
 }
 
-/** Thoughts that still have a linked Google Calendar event (for wipe cleanup). */
+/** Thoughts that still have a linked calendar event (for wipe cleanup). */
 export async function listWithCalendarEvents(): Promise<Thought[]> {
   const d = await db();
   return d.select<Thought[]>(
-    `SELECT * FROM thoughts WHERE calendar_event_id IS NOT NULL AND calendar_event_id != ''`,
+    `SELECT * FROM thoughts WHERE
+       (calendar_event_id IS NOT NULL AND calendar_event_id != '')
+       OR (apple_event_id IS NOT NULL AND apple_event_id != '')
+       OR (outlook_event_id IS NOT NULL AND outlook_event_id != '')`,
   );
 }
 
 export async function setCalendarEventId(id: number, eventId: string | null): Promise<void> {
   const d = await db();
   await d.execute(`UPDATE thoughts SET calendar_event_id = $1 WHERE id = $2`, [eventId, id]);
+}
+
+export async function setAppleEventId(id: number, eventId: string | null): Promise<void> {
+  const d = await db();
+  await d.execute(`UPDATE thoughts SET apple_event_id = $1 WHERE id = $2`, [eventId, id]);
+}
+
+export async function setOutlookEventId(id: number, eventId: string | null): Promise<void> {
+  const d = await db();
+  await d.execute(`UPDATE thoughts SET outlook_event_id = $1 WHERE id = $2`, [eventId, id]);
 }
 
 /** Permanently remove a thought. */

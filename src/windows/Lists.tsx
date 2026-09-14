@@ -321,6 +321,8 @@ export default function Lists() {
         )}
         {!fromDone && t.source === "voice" && <span className="tag-voice">voice</span>}
         {t.calendar_event_id && <span className="tag-calendar">Google Calendar</span>}
+        {t.apple_event_id && <span className="tag-calendar">Apple Calendar</span>}
+        {t.outlook_event_id && <span className="tag-calendar">Outlook</span>}
       </div>
       {!fromDone && (t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
       <div className="card-actions">

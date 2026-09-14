@@ -1,6 +1,8 @@
+mod apple_calendar;
 mod context;
 mod google_calendar;
 mod notify;
+mod outlook_calendar;
 #[cfg(feature = "voice")]
 mod voice;
 
@@ -214,6 +216,18 @@ pub fn run() {
             sql: include_str!("../migrations/003_calendar_event.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "apple calendar event id",
+            sql: include_str!("../migrations/004_more_calendars.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "outlook calendar event id",
+            sql: include_str!("../migrations/005_outlook_event.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -298,6 +312,15 @@ pub fn run() {
             google_calendar_create_event,
             google_calendar_delete_event,
             google_calendar_sync_checkin,
+            apple_calendar::apple_calendar_available,
+            apple_calendar::apple_calendar_connect,
+            apple_calendar::apple_calendar_upsert_event,
+            apple_calendar::apple_calendar_delete_event,
+            apple_calendar::apple_calendar_sync_checkin,
+            outlook_calendar::outlook_oauth_connect,
+            outlook_calendar::outlook_calendar_create_event,
+            outlook_calendar::outlook_calendar_delete_event,
+            outlook_calendar::outlook_calendar_sync_checkin,
             voice_resolve_model_path,
             voice_preload_model,
             voice_warm_microphone,
