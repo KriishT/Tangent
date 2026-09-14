@@ -302,17 +302,29 @@ export type AddToCalendarOutcome =
   | "cleared"
   | "auth_disconnected";
 
+export type CalendarTarget = "google" | "apple";
+
 export interface AddToCalendarResult {
   outcome: AddToCalendarOutcome;
   error?: string;
+  calendar?: CalendarTarget;
+}
+
+export async function connectedCalendarFlags(): Promise<{ google: boolean; apple: boolean }> {
+  const [google, apple] = await Promise.all([
+    isGoogleCalendarConnected(),
+    isAppleCalendarConnected(),
+  ]);
+  return { google, apple };
 }
 
 export function messageForCalendarOutcome(result: AddToCalendarResult): string {
+  const cal = result.calendar === "apple" ? "Apple Calendar" : "Google Calendar";
   switch (result.outcome) {
     case "created":
-      return "Added to calendar";
+      return result.calendar ? `Added to ${cal}` : "Added to calendar";
     case "updated":
-      return "Due time saved";
+      return result.calendar ? `Updated ${cal}` : "Due time saved";
     case "auth_disconnected":
       return result.error ?? GOOGLE_DISCONNECTED_MESSAGE;
     case "cleared":
@@ -326,9 +338,11 @@ export function messageForCalendarOutcome(result: AddToCalendarResult): string {
     case "cancelled":
       return "";
     case "not_connected":
-      return "Connect Google Calendar in Settings first";
+      return result.calendar === "apple"
+        ? "Connect Apple Calendar in Settings first"
+        : "Connect Google Calendar in Settings first";
     case "failed":
-      return result.error ?? "Could not add to Google Calendar";
+      return result.error ?? `Could not add to ${cal}`;
   }
 }
 
@@ -402,30 +416,33 @@ export async function addThoughtToGoogleCalendarWithDue(
   return addThoughtToGoogleCalendar(t);
 }
 
-async function deleteThoughtCalendarEvent(thought: Thought): Promise<void> {
+async function deleteGoogleEventOnly(thought: Thought): Promise<void> {
   const eventId = thought.calendar_event_id;
-  if (eventId) {
-    const settings = await loadSettings();
-    if (!settings.googleTokens?.refreshToken) {
-      await setCalendarEventId(thought.id, null);
-    } else {
-      try {
-        const result = await invoke<DeleteEventResult>("google_calendar_delete_event", {
-          params: {
-            clientId: GOOGLE_OAUTH_CLIENT_ID,
-            clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
-            tokens: settings.googleTokens,
-            eventId,
-            calendarId: null,
-          },
-        });
-        await saveSettings({ ...settings, googleTokens: result.tokens });
-      } catch {
-        /* best-effort — still clear local id */
-      }
-      await setCalendarEventId(thought.id, null);
-    }
+  if (!eventId) return;
+  const settings = await loadSettings();
+  if (!settings.googleTokens?.refreshToken) {
+    await setCalendarEventId(thought.id, null);
+    return;
   }
+  try {
+    const result = await invoke<DeleteEventResult>("google_calendar_delete_event", {
+      params: {
+        clientId: GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: GOOGLE_OAUTH_CLIENT_SECRET || null,
+        tokens: settings.googleTokens,
+        eventId,
+        calendarId: null,
+      },
+    });
+    await saveSettings({ ...settings, googleTokens: result.tokens });
+  } catch {
+    /* best-effort — still clear local id */
+  }
+  await setCalendarEventId(thought.id, null);
+}
+
+async function deleteThoughtCalendarEvent(thought: Thought): Promise<void> {
+  await deleteGoogleEventOnly(thought);
   await deleteAppleEvent(thought);
   await deleteOutlookEvent(thought);
 }
@@ -483,6 +500,47 @@ async function createEventViaApi(
   return { tokens: result.tokens, eventId };
 }
 
+/** Put a thought on one connected calendar. Prompts for a due time only if it has none. */
+export async function addThoughtToTargetCalendar(
+  thought: Thought,
+  target: CalendarTarget,
+  ask: DueTimePrompt,
+): Promise<AddToCalendarResult> {
+  let t = thought;
+  if (!t.due_at) {
+    const when = await ask({ hasDue: false, currentDueLabel: null });
+    if (when == null || !when.trim()) return { outcome: "cancelled", calendar: target };
+    const due = parseDueInput(when);
+    if (!due) return { outcome: "bad_due", calendar: target };
+    await setDueAt(t.id, due);
+    t = { ...t, due_at: due };
+  }
+
+  if (target === "google") {
+    const had = Boolean(t.calendar_event_id);
+    const result = await addThoughtToGoogleCalendar(t);
+    if (result.outcome === "created" && had) {
+      return { ...result, outcome: "updated", calendar: "google" };
+    }
+    return { ...result, calendar: "google" };
+  }
+
+  if (!(await isAppleCalendarConnected())) {
+    return { outcome: "not_connected", calendar: "apple" };
+  }
+  try {
+    const had = Boolean(t.apple_event_id);
+    await upsertAppleEvent(t);
+    return { outcome: had ? "updated" : "created", calendar: "apple" };
+  } catch (e) {
+    return {
+      outcome: "failed",
+      calendar: "apple",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export async function addThoughtToGoogleCalendar(
   thought: Thought,
 ): Promise<AddToCalendarResult> {
@@ -493,9 +551,8 @@ export async function addThoughtToGoogleCalendar(
 
   if (connected) {
     try {
-      // Replace any previous event for this thought (avoid duplicates).
       if (thought.calendar_event_id) {
-        await deleteThoughtCalendarEvent(thought);
+        await deleteGoogleEventOnly(thought);
         thought = { ...thought, calendar_event_id: null };
       }
       await createEventViaApi(thought);

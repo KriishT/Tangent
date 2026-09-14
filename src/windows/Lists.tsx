@@ -19,8 +19,14 @@ import {
   messageForCalendarOutcome,
   deleteThoughtWithCalendar,
   removeThoughtCalendarEvent,
-  addThoughtToGoogleCalendar,
+  addThoughtToTargetCalendar,
+  connectedCalendarFlags,
+  type CalendarTarget,
+  type AddToCalendarResult,
 } from "../lib/googleCalendar";
+import ThoughtCalendarActions, {
+  ThoughtCalendarChips,
+} from "../components/ThoughtCalendarActions";
 
 const ACTIVE: Bucket[] = ["do_now", "do_soon", "later", "idea"];
 const COLUMN_META: Record<string, { label: string; accent: string }> = {
@@ -51,6 +57,7 @@ export default function Lists() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [overDrop, setOverDrop] = useState<DropTarget | null>(null);
   const [toast, setToast] = useState("");
+  const [calendars, setCalendars] = useState({ google: false, apple: false });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragRef = useRef<{
     id: number;
@@ -76,6 +83,7 @@ export default function Lists() {
 
   useEffect(() => {
     void reload();
+    void connectedCalendarFlags().then(setCalendars);
     const un = listen("thought-added", () => {
       if (dragRef.current) return;
       void reload();
@@ -144,18 +152,7 @@ export default function Lists() {
     }
   };
 
-  const manageDueTime = async (t: Thought) => {
-    const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
-      prompt({
-        title: hasDue ? "Change due time" : "Set due time",
-        message: hasDue
-          ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
-          : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
-        defaultValue: "",
-        confirmLabel: hasDue ? "Update" : "Set due time",
-        allowEmpty: hasDue,
-      }),
-    );
+  const applyCalendarResult = async (result: AddToCalendarResult) => {
     if (result.outcome === "cancelled") return;
     const msg = messageForCalendarOutcome(result);
     if (msg) {
@@ -178,50 +175,36 @@ export default function Lists() {
       result.outcome === "failed"
     ) {
       await reload();
+      void connectedCalendarFlags().then(setCalendars);
     }
   };
 
-  const addToGoogleCalendar = async (t: Thought) => {
-    if (!t.due_at) {
-      const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
-        prompt({
-          title: "Add to Google Calendar",
-          message: hasDue
-            ? `Current: ${currentDueLabel}\n\nWhen should this appear on your calendar?\nLeave blank to clear.`
-            : "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
-          defaultValue: "",
-          confirmLabel: "Add to calendar",
-          allowEmpty: hasDue,
-        }),
-      );
-      if (result.outcome === "cancelled") return;
-      const msg = messageForCalendarOutcome(result);
-      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
-      if (
-        result.outcome === "created" ||
-        result.outcome === "opened" ||
-        result.outcome === "updated" ||
-        result.outcome === "cleared" ||
-        result.outcome === "auth_disconnected" ||
-        result.outcome === "bad_due" ||
-        result.outcome === "failed"
-      ) {
-        await reload();
-      }
-      return;
-    }
+  const manageDueTime = async (t: Thought) => {
+    const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
+      prompt({
+        title: hasDue ? "Change due time" : "Set due time",
+        message: hasDue
+          ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
+          : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
+        defaultValue: "",
+        confirmLabel: hasDue ? "Update" : "Set due time",
+        allowEmpty: hasDue,
+      }),
+    );
+    await applyCalendarResult(result);
+  };
 
-    const result = await addThoughtToGoogleCalendar(t);
-    const msg = messageForCalendarOutcome(result);
-    if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
-    if (
-      result.outcome === "created" ||
-      result.outcome === "opened" ||
-      result.outcome === "auth_disconnected" ||
-      result.outcome === "failed"
-    ) {
-      await reload();
-    }
+  const addToCalendar = async (t: Thought, target: CalendarTarget) => {
+    const result = await addThoughtToTargetCalendar(t, target, () =>
+      prompt({
+        title: target === "apple" ? "Add to Apple Calendar" : "Add to Google Calendar",
+        message:
+          "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
+        defaultValue: "",
+        confirmLabel: "Add to calendar",
+      }),
+    );
+    await applyCalendarResult(result);
   };
 
   const endDrag = () => {
@@ -320,9 +303,7 @@ export default function Lists() {
           </span>
         )}
         {!fromDone && t.source === "voice" && <span className="tag-voice">voice</span>}
-        {t.calendar_event_id && <span className="tag-calendar">Google Calendar</span>}
-        {t.apple_event_id && <span className="tag-calendar">Apple Calendar</span>}
-        {t.outlook_event_id && <span className="tag-calendar">Outlook</span>}
+        <ThoughtCalendarChips thought={t} />
       </div>
       {!fromDone && (t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
       <div className="card-actions">
@@ -348,30 +329,14 @@ export default function Lists() {
         )}
         {!fromDone && (
           <>
-            <button
-              type="button"
-              title={
-                t.due_at
-                  ? "Change due time (also updates Google Calendar when connected)"
-                  : "Set a due time (adds to Google Calendar when connected)"
-              }
-              onClick={() => void manageDueTime(t)}
-            >
-              {t.due_at ? "Change due" : "Set due"}
-            </button>
-            <button
-              type="button"
-              title={
-                t.calendar_event_id
-                  ? "Synced to Google Calendar — click to update"
-                  : t.due_at
-                    ? "Add or update on Google Calendar"
-                    : "Set a time and add to Google Calendar"
-              }
-              onClick={() => void addToGoogleCalendar(t)}
-            >
-              Google Calendar
-            </button>
+            <ThoughtCalendarActions
+              thought={t}
+              googleConnected={calendars.google}
+              appleConnected={calendars.apple}
+              onDue={() => void manageDueTime(t)}
+              onGoogle={() => void addToCalendar(t, "google")}
+              onApple={() => void addToCalendar(t, "apple")}
+            />
             <button type="button" title="Edit" onClick={() => void edit(t)}>
               Edit
             </button>

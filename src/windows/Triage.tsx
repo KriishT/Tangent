@@ -31,10 +31,16 @@ import {
   deleteThoughtWithCalendar,
   removeThoughtCalendarEvent,
   autoAddThoughtToGoogleCalendarIfConnected,
-  addThoughtToGoogleCalendar,
+  addThoughtToTargetCalendar,
+  connectedCalendarFlags,
+  type CalendarTarget,
+  type AddToCalendarResult,
 } from "../lib/googleCalendar";
 import { exportIcsForThought } from "../lib/calendar";
 import { pushNotification } from "../lib/notify";
+import ThoughtCalendarActions, {
+  ThoughtCalendarChips,
+} from "../components/ThoughtCalendarActions";
 
 type TriageProps = {
   /** Bumped by MainApp when thoughts change elsewhere (e.g. voice capture). */
@@ -59,6 +65,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState("");
   const [transcribing, setTranscribing] = useState(false);
+  const [calendars, setCalendars] = useState({ google: false, apple: false });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +77,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
 
   useEffect(() => {
     void loadSettings().then((s) => setHotkey(s.hotkey));
+    void connectedCalendarFlags().then(setCalendars);
   }, []);
 
   const reload = useCallback(async () => {
@@ -250,19 +258,8 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     }
   }, [flash]);
 
-  const manageDueTime = useCallback(
-    async (t: Thought) => {
-      const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
-        prompt({
-          title: hasDue ? "Change due time" : "Set due time",
-          message: hasDue
-            ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
-            : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
-          defaultValue: "",
-          confirmLabel: hasDue ? "Update" : "Set due time",
-          allowEmpty: hasDue,
-        }),
-      );
+  const applyCalendarResult = useCallback(
+    async (result: AddToCalendarResult) => {
       if (result.outcome === "cancelled") return;
       const msg = messageForCalendarOutcome(result);
       if (msg) {
@@ -285,70 +282,50 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
         result.outcome === "failed"
       ) {
         await reload();
+        void connectedCalendarFlags().then(setCalendars);
       }
     },
-    [prompt, reload, flash],
+    [flash, reload],
   );
 
-  const addToGoogleCalendar = useCallback(
+  const manageDueTime = useCallback(
     async (t: Thought) => {
-      if (!t.due_at) {
-        const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
-          prompt({
-            title: "Add to Google Calendar",
-            message: hasDue
-              ? `Current: ${currentDueLabel}\n\nWhen should this appear on your calendar?\nLeave blank to clear.`
-              : "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
-            defaultValue: "",
-            confirmLabel: "Add to calendar",
-            allowEmpty: hasDue,
-          }),
-        );
-        if (result.outcome === "cancelled") return;
-        const msg = messageForCalendarOutcome(result);
-        if (msg) {
-          flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
-          if (
-            result.outcome === "created" ||
-            result.outcome === "updated" ||
-            result.outcome === "opened"
-          ) {
-            void pushNotification("Tangent", msg);
-          }
-        }
-        if (
-          result.outcome === "created" ||
-          result.outcome === "opened" ||
-          result.outcome === "updated" ||
-          result.outcome === "cleared" ||
-          result.outcome === "auth_disconnected" ||
-          result.outcome === "bad_due" ||
-          result.outcome === "failed"
-        ) {
-          await reload();
-        }
-        return;
-      }
-
-      const result = await addThoughtToGoogleCalendar(t);
-      const msg = messageForCalendarOutcome(result);
-      if (msg) flash(msg, result.outcome === "auth_disconnected" ? 4000 : 2200);
-      if (
-        result.outcome === "created" ||
-        result.outcome === "opened" ||
-        result.outcome === "auth_disconnected" ||
-        result.outcome === "failed"
-      ) {
-        await reload();
-      }
+      const result = await scheduleThoughtDueTime(t, ({ hasDue, currentDueLabel }) =>
+        prompt({
+          title: hasDue ? "Change due time" : "Set due time",
+          message: hasDue
+            ? `Current: ${currentDueLabel}\n\nExamples: tomorrow 7:30 PM, Friday 3 PM.\nLeave blank to clear.`
+            : "When is this due? Examples: tomorrow 6 PM, Friday 3 PM, Jun 26 7:30 PM",
+          defaultValue: "",
+          confirmLabel: hasDue ? "Update" : "Set due time",
+          allowEmpty: hasDue,
+        }),
+      );
+      await applyCalendarResult(result);
     },
-    [prompt, reload, flash],
+    [prompt, applyCalendarResult],
+  );
+
+  const addToCalendar = useCallback(
+    async (t: Thought, target: CalendarTarget) => {
+      const result = await addThoughtToTargetCalendar(t, target, () =>
+        prompt({
+          title: target === "apple" ? "Add to Apple Calendar" : "Add to Google Calendar",
+          message:
+            "When should this appear on your calendar?\n\nExamples: tomorrow 7 PM, Friday 3 PM, Jun 26 7:30 PM",
+          defaultValue: "",
+          confirmLabel: "Add to calendar",
+        }),
+      );
+      await applyCalendarResult(result);
+    },
+    [prompt, applyCalendarResult],
   );
 
   const exportIcs = useCallback(
     async (t: Thought) => {
       if (!t.due_at) {
-        flash("Set a due time first (press t)");
+        flash("Set a due time first");
         return;
       }
       const result = await exportIcsForThought(t);
@@ -396,13 +373,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           e.preventDefault();
           void copy(t);
         }
-      } else if (e.key === "i") {
-        const t = items[selected];
-        if (t && !t.completed_at) {
-          e.preventDefault();
-          void addToGoogleCalendar(t);
-        }
-      } else if (e.key === "t" || e.key === "g") {
+      } else if (e.key === "t") {
         const t = items[selected];
         if (t && !t.completed_at) {
           e.preventDefault();
@@ -416,7 +387,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, selected, searching, sort, edit, remove, copy, manageDueTime, addToGoogleCalendar]);
+  }, [items, selected, searching, sort, edit, remove, copy, manageDueTime]);
 
   const inSearch = Boolean(query.trim());
 
@@ -428,7 +399,7 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
           <div className="page-sub">
             {items.length} {inSearch ? "result" : "parked"}
             {items.length === 1 ? "" : "s"} · hold{" "}
-            <strong>{formatHotkeyDisplay(hotkey)}</strong> to speak · j/k · 1-5 · e · t due · i Google Calendar · d · /
+            <strong>{formatHotkeyDisplay(hotkey)}</strong> to speak
           </div>
         </div>
       </div>
@@ -526,74 +497,48 @@ export default function Triage({ dataRev = 0 }: TriageProps) {
                   </span>
                 )}
                 {t.source === "voice" && <span>voice</span>}
-                {t.calendar_event_id && <span className="tag-calendar">Google Calendar</span>}
-                {t.apple_event_id && <span className="tag-calendar">Apple Calendar</span>}
-                {t.outlook_event_id && <span className="tag-calendar">Outlook</span>}
+                <ThoughtCalendarChips thought={t} />
               </div>
               {(t.ctx_extra || t.ctx_title) && <ThoughtContextPanel thought={t} />}
               {!t.completed_at && (
                 <div className="bucket-row">
-                  {BUCKET_ORDER.map((b, idx) => (
+                  {BUCKET_ORDER.map((b) => (
                     <button
                       key={b}
                       type="button"
                       onClick={() => void sort(t.id, b)}
                       title={b === "dropped" ? "Drop — moves to Done history" : undefined}
                     >
-                      [{idx + 1}] {BUCKET_LABELS[b]}
+                      {BUCKET_LABELS[b]}
                     </button>
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => void manageDueTime(t)}
-                    title={
-                      t.due_at
-                        ? "Change due time (also updates Google Calendar when connected)"
-                        : "Set a due time (adds to Google Calendar when connected)"
-                    }
-                  >
-                    [t] {t.due_at ? "Change due" : "Set due"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void addToGoogleCalendar(t)}
-                    title={
-                      t.calendar_event_id
-                        ? "Synced to Google Calendar — click to update"
-                        : t.due_at
-                          ? "Add or update on Google Calendar"
-                          : "Set a time and add to Google Calendar"
-                    }
-                  >
-                    [i] Google Calendar
-                  </button>
-                  {t.due_at && (
-                    <button
-                      type="button"
-                      onClick={() => void exportIcs(t)}
-                      title="Download .ics for Outlook, Apple Calendar, etc."
-                    >
-                      Download .ics
-                    </button>
-                  )}
+                  <ThoughtCalendarActions
+                    thought={t}
+                    googleConnected={calendars.google}
+                    appleConnected={calendars.apple}
+                    onDue={() => void manageDueTime(t)}
+                    onGoogle={() => void addToCalendar(t, "google")}
+                    onApple={() => void addToCalendar(t, "apple")}
+                    onIcs={() => void exportIcs(t)}
+                  />
                   <button type="button" onClick={() => void copy(t)}>
-                    [c] Copy
+                    Copy
                   </button>
                   <button type="button" onClick={() => void edit(t)}>
-                    [e] Edit
+                    Edit
                   </button>
                   <button type="button" className="del" onClick={() => void remove(t)}>
-                    [d] Delete
+                    Delete
                   </button>
                 </div>
               )}
               {t.completed_at && (
                 <div className="bucket-row">
                   <button type="button" onClick={() => void copy(t)}>
-                    [c] Copy
+                    Copy
                   </button>
                   <button type="button" className="del" onClick={() => void remove(t)}>
-                    [d] Delete
+                    Delete
                   </button>
                 </div>
               )}

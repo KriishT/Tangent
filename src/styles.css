@@ -859,11 +859,12 @@ body.capture-window {
   background: var(--accent-soft) !important;
   border-color: transparent !important;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .bucket-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   margin-top: 14px;
   flex-wrap: wrap;
 }
@@ -872,7 +873,7 @@ body.capture-window {
   border: 1px solid var(--stroke);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
-  padding: 7px 11px;
+  padding: 6px 10px;
   font-size: 11px;
   font-weight: 600;
   box-shadow: none;
@@ -893,6 +894,12 @@ body.capture-window {
 .bucket-row button.del:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+.bucket-row button.cal-on,
+.card-actions button.cal-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
 }
 
 .empty {
@@ -1121,7 +1128,7 @@ body.capture-window {
 .card:hover .card-actions,
 .card:focus-within .card-actions {
   opacity: 1;
-  max-height: 160px;
+  max-height: 200px;
 }
 .card-actions button {
   background: var(--surface-muted);

@@ -727,10 +727,10 @@ export default function Settings({
       <div className="setting">
         <label>Calendar reminders</label>
         <div className="desc">
-          Connect Apple Calendar, Outlook, or Google below — then <strong>Set due</strong> /{" "}
-          <strong>t</strong> creates the event automatically. Or press <strong>i</strong> to
-          download a <code>.ics</code> file with no sign-in. Desktop popups still fire while
-          Tangent is in the tray.
+          Connect Apple Calendar or Google below. <strong>Set due</strong> saves the time.
+          Then <strong>Google</strong> or <strong>Apple</strong> on a thought puts it on that
+          calendar — even if the due time is already set. With no calendar connected, download a{" "}
+          <code>.ics</code> file instead. Desktop popups still fire while Tangent is in the tray.
         </div>
       </div>
 
@@ -765,7 +765,6 @@ export default function Settings({
         <label>Outlook</label>
         <div className="desc">
           Connect once for automatic events in Outlook / Microsoft 365. Uses a{" "}
-          <strong>Tangent Reminders</strong> calendar. When connected, Set due / <strong>t</strong>{" "}
           creates the event.
         </div>
         {isOutlookOAuthConfigured() ? (
@@ -802,7 +801,7 @@ export default function Settings({
         <div className="desc">
           Advanced: connect once for automatic event creation. Google may show verification warnings
           for new apps — if that feels risky, use <code>.ics</code> export instead (above). When
-          connected, <strong>Set due</strong> / <strong>t</strong> auto-creates events. Day-only
+          connected, <strong>Set due</strong> auto-creates events. Day-only
           phrases like &quot;tonight&quot; get a tentative evening time you can adjust.
         </div>
         {isGoogleOAuthConfigured() ? (

@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "tangent"
-version = "1.0.10"
+version = "1.0.11"
 dependencies = [
  "active-win-pos-rs",
  "base64 0.22.1",
