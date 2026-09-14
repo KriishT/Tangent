@@ -43,9 +43,7 @@ export async function preloadVoiceModel(): Promise<void> {
   try {
     const s = await loadSettings();
     await invoke("voice_preload_model", { modelPath: s.modelPath ?? "" });
-    if (s.voiceEnabled) {
-      await invoke("voice_warm_microphone");
-    }
+    // Don't warm the mic here — on Mac that pops the microphone prompt at launch.
   } catch {
     /* optional warm-up */
   }

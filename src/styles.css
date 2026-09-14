@@ -1483,3 +1483,118 @@ body.capture-window {
   z-index: 100;
   border: 1px solid var(--stroke);
 }
+
+/* =========================================================
+   Mac first-run permissions
+   ========================================================= */
+.perm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--canvas) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.perm-card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  padding: 28px 26px 22px;
+  box-shadow: var(--shadow-lg);
+}
+
+.perm-heading {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-heading);
+  margin: 0 0 8px;
+}
+
+.perm-lead {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0 0 18px;
+}
+
+.perm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perm-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface-muted);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+}
+
+.perm-copy {
+  min-width: 0;
+}
+
+.perm-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.perm-why {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+.perm-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+
+.perm-status.ok {
+  color: var(--success);
+}
+
+.perm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.perm-actions .btn {
+  white-space: nowrap;
+}
+
+.perm-footnote {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 12px 0 0;
+}
+
+.perm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.setting .perm-panel-compact {
+  margin-top: 0;
+}
+

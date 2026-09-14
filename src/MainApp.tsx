@@ -17,6 +17,8 @@ import { ensureNotifications, maybeTriageNudge, runResurfaceTick } from "./lib/r
 import { loadSettings, saveSettings, type ThemeMode } from "./lib/settings";
 import { applyTheme, watchSystemTheme } from "./lib/theme";
 import { checkForAppUpdate, installAppUpdate } from "./lib/updater";
+import MacPermissionsSetup from "./components/MacPermissionsSetup";
+import { shouldShowMacPermissionsIntro } from "./lib/macPermissions";
 
 type Tab = "triage" | "lists" | "stats" | "settings";
 
@@ -27,6 +29,7 @@ function AppShell() {
   const [theme, setTheme] = useState<ThemeMode>("system");
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [macPerms, setMacPerms] = useState<"checking" | "show" | "done">("checking");
 
   const onThemeChange = useCallback(async (next: ThemeMode) => {
     setTheme(next);
@@ -69,6 +72,12 @@ function AppShell() {
       });
     });
     return unwatch;
+  }, []);
+
+  useEffect(() => {
+    void shouldShowMacPermissionsIntro().then((show) => {
+      setMacPerms(show ? "show" : "done");
+    });
   }, []);
 
   useEffect(() => {
@@ -146,6 +155,9 @@ function AppShell() {
 
   return (
     <div className="app">
+      {macPerms === "show" && (
+        <MacPermissionsSetup onDone={() => setMacPerms("done")} />
+      )}
       <aside className="sidebar" aria-label="Main navigation">
         <Logo />
         <nav className="sidebar-nav">

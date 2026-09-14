@@ -1,6 +1,7 @@
 mod apple_calendar;
 mod context;
 mod google_calendar;
+mod mac_permissions;
 mod notify;
 mod outlook_calendar;
 #[cfg(feature = "voice")]
@@ -295,7 +296,7 @@ pub fn run() {
             if let Some(capture) = app.get_webview_window("capture") {
                 let _ = capture.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
             }
-            context::request_accessibility_access();
+            // Accessibility is requested from the first-run Mac setup screen, not on every launch.
 
             Ok(())
         })
@@ -307,6 +308,9 @@ pub fn run() {
             begin_voice,
             end_voice,
             native_notify,
+            mac_permissions::accessibility_trusted,
+            mac_permissions::request_accessibility_prompt,
+            mac_permissions::open_mac_privacy_pane,
             google_oauth_connect,
             google_oauth_revoke,
             google_calendar_create_event,

@@ -28,7 +28,8 @@ function isWithinPickedSlot(nowM: number, slotM: number): boolean {
 export async function ensureNotifications(): Promise<boolean> {
   try {
     granted = await isPermissionGranted();
-    if (!granted) {
+    // On Mac the system prompt belongs on the first-run setup screen, not at launch.
+    if (!granted && !isMacPlatform()) {
       granted = (await requestPermission()) === "granted";
     }
   } catch {

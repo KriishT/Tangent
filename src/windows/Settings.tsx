@@ -23,6 +23,7 @@ import { useDialog } from "../components/DialogProvider";
 import { applyTheme } from "../lib/theme";
 import HotkeyCapture from "../components/HotkeyCapture";
 import { applyHotkey } from "../lib/hotkey";
+import { MacPermissionsPanel } from "../components/MacPermissionsSetup";
 import { validateHotkey } from "../lib/hotkeyFormat";
 import {
   connectGoogleCalendar,
@@ -437,10 +438,7 @@ export default function Settings({
           <>
             <div className="desc" style={{ marginTop: 10 }}>
               {onMac ? (
-                <>
-                  macOS: System Settings → Privacy &amp; Security → Microphone — allow Tangent.
-                  Then check System Settings → Sound → Input for the selected microphone.
-                </>
+                <>Use Mac permissions below, then check System Settings → Sound → Input.</>
               ) : (
                 <>
                   Windows: Settings → Privacy &amp; security → Microphone — turn on access and
@@ -461,6 +459,19 @@ export default function Settings({
           </>
         )}
       </div>
+
+      {onMac && (
+        <div className="setting">
+          <label>Mac permissions</label>
+          <div className="desc">
+            Microphone, Accessibility, and Notifications in one place. Browser and Calendar still
+            ask the first time you use them.
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <MacPermissionsPanel compact />
+          </div>
+        </div>
+      )}
 
       <div className="setting">
         <div className="row">

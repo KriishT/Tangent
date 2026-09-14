@@ -374,6 +374,21 @@ fn enrich_macos(mut ctx: WorkContext, pid: Option<u64>) -> WorkContext {
     ctx
 }
 
+/// True if macOS Accessibility is already granted (does not prompt).
+#[cfg(target_os = "macos")]
+pub fn accessibility_is_trusted() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    unsafe { AXIsProcessTrusted() }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn accessibility_is_trusted() -> bool {
+    true
+}
+
 /// Shows the macOS Accessibility prompt so window titles / focus restore work.
 #[cfg(target_os = "macos")]
 pub fn request_accessibility_access() {
