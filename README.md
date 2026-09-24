@@ -1,83 +1,268 @@
 # Tangent
 
-Catch every stray thought without leaving what you're doing - then sort it out later, by priority.
+**Catch every stray thought without leaving what you're doing.**
 
-Tangent is a lightweight, local-first desktop app (Tauri v2 + React/TypeScript) for **Windows and macOS**. A global hotkey pops a capture bar over whatever you're doing; you type or speak one line; it's saved with the context of what you were working on (active app + window/file), and you triage it later. See the product docs in [../docs](../docs).
+Tangent is a local-first desktop app for Windows and macOS. Hold a global hotkey, speak (or type) one line, and keep working — your thought is parked with the app and file you were in, ready to triage later.
 
-## Status
+[Website](https://usetangent.vercel.app/) · [Releases](https://github.com/KriishT/Tangent/releases) · [v1.0.11](https://github.com/KriishT/Tangent/releases/tag/v1.0.11)
 
-Implements MVP milestones M0-M5:
-
-- M0/M1 - global hotkey, capture overlay with work-context chip, save to SQLite, focus returns to your previous app, system tray, launch-on-startup.
-- M2 - triage view with keyboard-driven buckets (Do Now / Do Soon / Later / Idea / Drop) and date detection (chrono-node).
-- M3 - optional on-device voice (whisper.cpp via `whisper-rs`) behind a Cargo feature, plus Tier 0 rule-based cleanup (filler/self-correction) that always keeps the raw transcript.
-- M4 - resurfacing notifications + daily nudge, full settings, privacy controls (context blocklist, delete-audio, export/wipe), and optional Tier 1/2 LLM cleanup (local Ollama or BYOK cloud).
-- M5 - NSIS installer config + signing notes (below), stats view.
-
-## Prerequisites (one-time)
-
-Node is already enough to build the frontend, but the desktop app needs the Rust toolchain:
-
-1. Install Rust: https://www.rust-lang.org/tools/install (`rustup`).
-2. Windows: install the "Desktop development with C++" workload (MSVC build tools) via Visual Studio Build Tools, and ensure the WebView2 runtime is present (it ships with Windows 11 / recent Edge).
-3. Install JS deps: `npm install`.
-4. Generate app icons (required before the Rust build): `npx tauri icon path\to\icon.png` (any square PNG, ideally 1024x1024). This creates `src-tauri/icons/`.
-
-## Run / build
-
-```bash
-# Dev (hot-reloads the UI; compiles Rust on first run)
-npm run tauri:dev
-
-# Production build -> Windows installer in src-tauri/target/release/bundle/
-npm run tauri:build
+```
+Capture (<2s)  →  Park (with work context)  →  Triage  →  Resurface
 ```
 
-The base build is intentionally light. To include on-device voice (pulls in cpal + whisper.cpp, which needs a C/C++ toolchain such as CMake/Clang):
+---
 
-```bash
-npm run tauri:dev -- --features voice
-npm run tauri:build -- --features voice
+## Why it exists
+
+You're deep in a problem. A tangential thought fires — submit the assignment, buy the cable, email someone back. You either:
+
+1. **Stop and write it down** — context switch, lose the thread, hunt for where you were, or
+2. **Tell yourself you'll remember** — and you don't.
+
+Notes apps and Siri force you out of flow. Dictation tools paste into whatever is focused — they don't park, sort, or bring the thought back. Scratchpads capture fast but never close the loop.
+
+Tangent is built for the full loop:
+
+| Moment | What happens |
+| --- | --- |
+| **Capture** | Global hotkey. Speak or type. Focus stays in your editor. |
+| **Park** | Saved locally with automatic work context (app + window/file). |
+| **Triage** | Keyboard-driven buckets: Do Now / Do Soon / Later / Idea / Drop. |
+| **Resurface** | Native notifications, calendar sync, or `.ics` export when it's due. |
+
+The differentiator isn't speed alone — fast capture is table stakes. **The product is that parked thoughts come back with the context you had when you had them.**
+
+When developers are interrupted, they hunt for context before resuming — only **10%** of programming sessions return to coding in under a minute ([Parnin & Rugaber](https://blog.acolyer.org/2016/04/04/programmer-interrupted/)). Tangent records that context at capture time.
+
+---
+
+## Features
+
+### Capture
+- **Global hotkey** — default `Ctrl+Shift+Space` (Windows) / `Cmd+Shift+Space` (macOS); rebindable
+- **Hold to speak, release to save** — on-device Whisper transcription; no cloud required
+- **Typed quick-add** in Triage for when you don't want the mic
+- **Non-activating overlay** — your previous app keeps focus; the cursor never moves
+- **Automatic work context** — active app name + parsed window/file/workspace detail
+- **Tier 0 cleanup** — strips fillers (`um`, `uh`), resolves simple self-corrections; raw transcript kept; optional faithful mode
+
+### Triage
+- Keyboard-first inbox: `j`/`k` navigate, `1`–`5` sort into buckets
+- Buckets: **Do Now · Do Soon · Later · Idea · Drop**
+- Auto date detection (`tomorrow`, `Friday 3pm`, …) via chrono-node
+- Due chips with urgency styling (soon / overdue)
+- Search across all thoughts (`/`)
+- Edit, copy, delete; expandable context details panel
+
+### Priority board
+- Five columns matching the triage buckets (+ Done)
+- Drag cards between columns
+- Same context chips and due metadata as Triage
+
+### Resurfacing
+- Native OS notifications when a due item arrives (`Tangent reminder`)
+- Configurable triage nudges (hourly, daily, chosen times, quiet hours)
+- **Do Soon** items resurface at your morning hour
+
+### Calendar
+- **Google Calendar** — OAuth connect; one-click add from Triage (`i`)
+- **Apple Calendar** and **Outlook** — same connect pattern where supported
+- **`.ics` download** — works with any calendar app, no account required
+- Optional phone check-in events (`Check Tangent`) so reminders reach your pocket
+
+### Privacy & settings
+- **Local-first** — SQLite on disk; no account required to start
+- Context capture toggle + per-app blocklist (e.g. password managers)
+- Light / Dark / Match system
+- Launch on startup; lives in the system tray so the hotkey stays live
+- Export thoughts / wipe all data
+- Optional in-app updates
+
+### Stats
+- Triage rate (the health metric — capture is easy; sorting is the product)
+- Caught · Triaged · Parked · Never triaged
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+| --- | --- |
+| Shell | [Tauri v2](https://tauri.app/) |
+| Backend | Rust |
+| Frontend | React 18 + TypeScript + Vite |
+| Storage | SQLite (`tauri-plugin-sql`) |
+| Hotkey | `tauri-plugin-global-shortcut` |
+| Window context | `active-win-pos-rs` (+ Win32 / macOS focus restore) |
+| Voice (optional) | `cpal` + [whisper.cpp](https://github.com/ggerganov/whisper.cpp) via `whisper-rs` |
+| Date parsing | `chrono-node` |
+| Notifications | `tauri-plugin-notification` |
+| Autostart | `tauri-plugin-autostart` |
+| Updates | `tauri-plugin-updater` |
+
+**Footprint target:** under ~120 MB idle. Voice and any LLM cleanup are optional and lazy-loaded — a type-only user barely notices the process running.
+
+---
+
+## How it works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  You're in Cursor / VS Code / Chrome / …                    │
+│                                                             │
+│  Hold Ctrl+Shift+Space                                      │
+│       ↓                                                     │
+│  Rust reads foreground window (context)                     │
+│  Tiny "Listening" HUD appears (non-activating)              │
+│  Speak → release → HUD hides, focus restored                │
+│       ↓                                                     │
+│  On-device Whisper → Tier 0 cleanup → SQLite                 │
+│  Thought parked with: body + app + file/workspace + due?    │
+│       ↓                                                     │
+│  Later: Triage (1–5) → Board / calendar / notification      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Then download a Whisper English model into `tangent/models/` (optional — release builds bundle `ggml-base.en.bin` automatically):
+### Architecture (repo map)
 
-```powershell
+```
+tangent/
+├── src/                      # React UI
+│   ├── windows/              # Triage, Board, Stats, Settings, Capture HUD
+│   ├── components/           # Logo, dialogs, calendar actions, …
+│   └── lib/                  # DB, hotkey, resurfacing, calendars, cleanup
+├── src-tauri/
+│   ├── src/
+│   │   ├── lib.rs            # App builder, plugins, tray, commands
+│   │   ├── context.rs        # Foreground window + focus restore
+│   │   ├── voice.rs          # Recording + Whisper (feature-gated)
+│   │   ├── notify.rs         # Native notification helpers
+│   │   ├── google_calendar.rs
+│   │   ├── apple_calendar.rs
+│   │   └── outlook_calendar.rs
+│   └── tauri.conf.json
+└── models/                   # Whisper ggml models (dev / bundled)
+```
+
+The global hotkey is registered from the frontend so it can be rebound at runtime. Closing the main window **hides to tray** — the process stays alive so capture never stops.
+
+---
+
+## Install (end users)
+
+Download the latest installer from **[Releases](https://github.com/KriishT/Tangent/releases)**.
+
+| Platform | Artifact |
+| --- | --- |
+| Windows | `.exe` / NSIS installer |
+| macOS | `.dmg` |
+
+Unsigned beta builds may trigger SmartScreen (Windows) or Gatekeeper (macOS) once — use **More info → Run anyway** / right-click → Open. See [docs/releasing.md](docs/releasing.md).
+
+---
+
+## Develop
+
+### Prerequisites
+
+1. [Node.js](https://nodejs.org/) (LTS)
+2. [Rust](https://www.rust-lang.org/tools/install) via `rustup`
+3. **Windows:** Visual Studio Build Tools — "Desktop development with C++"; WebView2 (ships with Windows 11 / recent Edge)
+4. **macOS:** Xcode Command Line Tools
+5. For voice builds: a C/C++ toolchain (CMake / Clang) for whisper.cpp
+
+### Run
+
+```bash
+cd tangent
+npm install
+npm run tauri:dev          # includes --features voice + Whisper model fetch
+```
+
+Production build:
+
+```bash
+npm run tauri:build        # installer under src-tauri/target/release/bundle/
+```
+
+Voice is enabled by default in the npm scripts. A base build without voice is possible via Cargo without the `voice` feature if you need a lighter compile.
+
+Whisper model (English base, bundled on release; fetched in dev):
+
+```bash
 npm run ensure-model
 ```
 
-Or manually download **ggml-small.en.bin** for higher accuracy during dev:
+Optional higher-accuracy model for local testing: `ggml-small.en.bin` from [Hugging Face / whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp).
 
-```powershell
-mkdir models -Force
-Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" -OutFile "models/ggml-small.en.bin"
-```
+### Google Calendar (optional)
 
-Point **Settings → Voice model** at that file to override the bundled model.
+Copy `.env.example` → `.env` and set OAuth client credentials for local builds. Without them, the rest of the app works; only Connect Google Calendar is disabled. Details: [docs/google-calendar-oauth.md](docs/google-calendar-oauth.md).
 
-## How it works (architecture)
+---
 
-- `src-tauri/src/lib.rs` - app builder, plugins (sql, global-shortcut, notification, autostart), tray, and the `trigger_capture` / `restore_focus` / voice commands.
-- `src-tauri/src/context.rs` - reads the foreground window (app/title) and remembers its handle to restore focus (Windows via the `windows` crate; no-op elsewhere).
-- `src-tauri/src/voice.rs` - optional recording thread (cpal) + transcription (whisper-rs).
-- `src/windows/CaptureOverlay.tsx` - the capture bar (type or hold-to-speak).
-- `src/windows/Triage.tsx` - the triage loop.
-- `src/windows/Settings.tsx` / `Stats.tsx` - settings and stats.
-- `src/lib/*` - SQLite access, date parsing, Tier 0 cleanup, optional AI cleanup, settings, hotkey, resurfacing.
+## Privacy
 
-The global hotkey is registered from the frontend (`src/lib/hotkey.ts`) so it can be rebound at runtime. Closing the main window hides it to the tray (the process keeps running so the hotkey stays live).
+- Thoughts live in local SQLite — not on our servers
+- Voice transcription runs **on-device** (whisper.cpp)
+- Work context can be disabled or blocked per app
+- No account required for core capture → triage → resurface
+- Export or delete everything from Settings
 
-## Footprint goal
+---
 
-Target < 120 MB idle (see [../docs/04-technical-feasibility.md](../docs/04-technical-feasibility.md) section 7a). Nothing heavy loads at startup; the Whisper model and any LLM cleanup are lazy and optional. "Lite mode" in Settings disables voice/AI entirely.
+## Product principles
 
-## Code signing (M5, before public distribution)
+1. Capture takes **under two seconds** and requires **zero decisions**
+2. The app **never interrupts** you during capture
+3. **Work context is automatic** — the wedge
+4. **Capture first, organize later**
+5. **Local-first & private** by default
+6. The inbox is a **pipeline, not a graveyard** — resurfacing keeps it moving
+7. **Lightweight** — heavy pieces (voice, AI) are optional and lazy
 
-Unsigned apps trigger Windows SmartScreen. For release, sign the installer (Authenticode certificate) and configure signing in `tauri.conf.json` under `bundle.windows`. See the Tauri Windows signing guide. Until then, beta testers can click through SmartScreen ("More info" -> "Run anyway").
+---
 
-**Beta without signing:** follow [docs/releasing.md](docs/releasing.md) — GitHub Releases, checksums, and install notes for Windows + Mac.
+## Docs
 
-## Notes / known follow-ups
+| Doc | What it covers |
+| --- | --- |
+| [docs/releasing.md](docs/releasing.md) | Shipping unsigned Windows + Mac builds |
+| [docs/google-calendar-oauth.md](docs/google-calendar-oauth.md) | Google Calendar OAuth setup |
+| [docs/platform-support.md](docs/platform-support.md) | Platform notes |
+| [docs/10-feature-strategy.md](docs/10-feature-strategy.md) | Feature strategy |
 
-- whisper-rs API names can shift between versions; if a voice build fails to compile, pin/adjust the `whisper-rs` version in `Cargo.toml` and the call sites in `voice.rs`.
-- Overlay focus behavior (non-activating window + reliable refocus) is the main thing to verify on first run on your machine; it's implemented but worth a smoke test (the M0 acceptance check).
+Broader product research and strategy live in the parent monorepo `docs/` (user research, competitor teardown, MVP spec, [strategic assessment](../docs/11-strategic-assessment-2026.md)).
+
+---
+
+## Status
+
+MVP milestones **M0–M5** are implemented: capture, triage, board, voice, resurfacing, settings, stats, calendar integrations, `.ics` export, tray, autostart, updater.
+
+**Current version:** `1.0.11`
+
+---
+
+## Contributing
+
+Issues and PRs are welcome. For large changes, open an issue first so we can align on direction.
+
+Useful smoke checks after a change:
+
+- Hotkey → Listening HUD → release → focus restored to the previous app
+- Thought appears in Triage with a sensible context chip
+- Sort with `1`–`5`; drag on the Priority board
+- Due time + notification / calendar path
+
+---
+
+## License
+
+Source available for now; license TBD. If you need clarity for redistribution, open an issue.
+
+---
+
+<p align="center">
+  <sub>Catch every stray thought without leaving what you're doing.</sub>
+</p>
